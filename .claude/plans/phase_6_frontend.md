@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 **Planned 2026-11-21 — not started** |
+| **Status** | 🟡 **6.1–6.8 built 2026-11-21; 6.9 browser walkthrough still open** |
 | **Branch** | `feature/phase-6-frontend` (created from `main` at `f982b8d`) |
 | **Tasks** | 6.0 housekeeping, 6.1–6.6 as listed in §17, **6.7 `/home` landing page**, **6.8 funny 404 page**, 6.9 live gate |
 | **Touches** | `frontend/` and `CLAUDE.md` (§5, §10, §17). Backend and AI service are unchanged, and the §9 contracts are not modified |
@@ -201,4 +201,29 @@ A medical "case file" for a missing page:
 
 ## Results
 
-_To be filled in at the end of Phase 6 (test counts, live gate timings and outcomes, any deviations from this plan)._
+**Built (commit `d037ff8`):** 6.1–6.8. Frontend only; `backend/` and `ai/` unchanged, no new dependencies.
+
+**Automated checks:** 28 frontend tests in 6 files pass (client, routing, login/register, chat, admin). ESLint, `tsc --noEmit`, `prettier --check` and `vite build` are clean (442 kB JS, 137 kB gzip).
+
+**Read-only checks against the running services** (Vite 5173, backend 8000, AI 8001, Ollama up, real `data/`):
+- Vite compiled `main.tsx` and the Home, NotFound, Chat and Admin pages (200).
+- `/api/health` was `ok`, with both models present and Qdrant open.
+- The CORS preflight from `http://localhost:5173` allowed `content-type,authorization`.
+- A wrong password returned 401 `{"detail":"incorrect email or password"}`.
+- A short password returned a list-form 422, the shape `errorDetail` joins into readable text.
+- Chat and admin routes without a token returned 401.
+
+**Not done: 6.9 browser walkthrough.** It has to be driven in a real browser, and it writes to the real `data/`: a registered user, an uploaded and deleted document, and chat transcripts. Checklist for the person running it:
+1. `/` lands on `/home`. "Try out AI Doctor" goes to login, then `/chat`.
+2. Register logs in automatically.
+3. An in-corpus question gives a cited answer with the disclaimer.
+4. A red-flag message ("I have chest pain") shows the red banner, once.
+5. An off-corpus question shows the fallback.
+6. Admin: upload goes `pending` → `ready`, then delete with confirmation.
+7. A normal user opening `/admin` lands on `/chat`.
+8. Refresh starts a new session.
+9. An unknown URL shows the 404 page.
+10. Check the landing page and 404 at phone width.
+
+## Deviations from the plan
+- None to scope. The planned `test/fetchMock.ts` became `test/helpers.tsx`, which also holds `renderApp`.

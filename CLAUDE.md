@@ -719,16 +719,16 @@ reusing a session got 403, and a stopped AI service gave the friendly 503. `olla
 
 ### Phase 6 — Frontend (M7)
 
-- **6.1** `src/api/` — typed `auth.ts`, `chat.ts`, `admin.ts`; bearer-token injection; 401 → logout.
-- **6.2** `AuthContext` (token + role in `localStorage`) + role-based route guards.
-- **6.3** `LoginPage`, `RegisterPage`.
-- **6.4** `ChatPage` — `session_id = crypto.randomUUID()` in React state only, message list, "Thinking…" indicator, `react-markdown` (no raw HTML), citation list under each answer, red emergency banner when `emergency=true`, persistent disclaimer banner.
-- **6.5** `AdminPage` — upload, document table with status (poll via TanStack Query while any row is `pending`), delete with confirmation, `error` text shown for `failed` rows.
-- **6.6** `npm run lint ; npm run typecheck ; npm run test` green.
-- **6.7** `HomePage` at `/home`, the public landing page; `/` redirects here.
+- ✅ **6.1** `src/api/` — typed `auth.ts`, `chat.ts`, `admin.ts`; bearer-token injection; 401 → logout.
+- ✅ **6.2** `AuthContext` (token + role in `localStorage`) + role-based route guards.
+- ✅ **6.3** `LoginPage`, `RegisterPage`.
+- ✅ **6.4** `ChatPage` — `session_id = crypto.randomUUID()` in React state only, message list, "Thinking…" indicator, `react-markdown` (no raw HTML), citation list under each answer, red emergency banner when `emergency=true`, persistent disclaimer banner.
+- ✅ **6.5** `AdminPage` — upload, document table with status (poll via TanStack Query while any row is `pending`), delete with confirmation, `error` text shown for `failed` rows.
+- ✅ **6.6** `npm run lint ; npm run typecheck ; npm run test` green.
+- ✅ **6.7** `HomePage` at `/home`, the public landing page; `/` redirects here.
   - A "VERIDOC AI" hero with a **"Try out AI Doctor"** link to `/chat` (signed-out visitors log in first).
   - How-it-works steps, feature cards, the disclaimer and the project credits.
-- **6.8** `NotFoundPage` for `*`: a funny medical "case file".
+- ✅ **6.8** `NotFoundPage` for `*`: a funny medical "case file".
   - A flatlining EKG, "Diagnosis: Acute Page-Not-Found-itis" and a mock failed Verifier audit.
   - Links home and to Doctor AI.
   - The jokes never touch real emergencies.
@@ -746,6 +746,8 @@ reusing a session got 403, and a stopped AI service gave the friendly 503. `olla
 - An unknown URL shows the 404 page.
 
 Plan and results: `.claude/plans/phase_6_frontend.md`.
+
+**Status 2026-11-21:** 6.1–6.8 built; frontend 28 tests (6 files), ESLint, `tsc`, Prettier and `vite build` clean. Backend and AI service are untouched. Read-only checks against the running services confirmed the contracts the UI relies on: Vite compiles every page, CORS allows the 5173 origin with `authorization`, a wrong password is a 401 with `"incorrect email or password"`, a short password is a list-form 422, and chat and admin routes return 401 without a token. **6.9, the browser walkthrough, is still open:** it writes to the real `data/` (registers a user, uploads and deletes a document), so it needs to be run deliberately.
 
 ### Phase 7 — Evaluation (M8)
 
