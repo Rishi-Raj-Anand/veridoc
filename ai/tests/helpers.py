@@ -48,7 +48,7 @@ def build_app(
     *,
     models: list[str] | None = None,
     ollama_fails: bool = False,
-    qdrant: FakeQdrant | None | str = "default",
+    qdrant: FakeQdrant | str | None = "default",
 ) -> FastAPI:
     """Create the app with Ollama and Qdrant replaced by fakes.
 

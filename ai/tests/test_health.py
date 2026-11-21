@@ -27,7 +27,8 @@ def test_listed_model_names_handles_object_entries() -> None:
             self.model = model
 
     class Listed:
-        models = [Entry("qwen3:8b"), Entry("bge-m3:latest")]
+        def __init__(self) -> None:
+            self.models = [Entry("qwen3:8b"), Entry("bge-m3:latest")]
 
     assert listed_model_names(Listed()) == {"qwen3:8b", "bge-m3:latest"}
 

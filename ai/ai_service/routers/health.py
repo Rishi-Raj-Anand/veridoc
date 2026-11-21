@@ -84,7 +84,7 @@ async def check_ollama(settings: Settings) -> tuple[OllamaHealth, ModelsHealth]:
     client = ollama.Client(host=settings.ollama_host)
     try:
         listed = await asyncio.to_thread(client.list)
-    except Exception as exc:  # noqa: BLE001 - health must report, never raise
+    except Exception as exc:  # health must report, never raise
         logger.warning("ollama unreachable at %s: %s", settings.ollama_host, exc)
         return (
             OllamaHealth(ok=False, host=settings.ollama_host, error=f"{type(exc).__name__}: {exc}"),
@@ -110,7 +110,7 @@ async def check_qdrant(request: Request, settings: Settings) -> QdrantHealth:
         return QdrantHealth(ok=False, path=path, error="local storage was not opened at startup")
     try:
         await asyncio.to_thread(client.get_collections)
-    except Exception as exc:  # noqa: BLE001 - health must report, never raise
+    except Exception as exc:  # health must report, never raise
         logger.warning("qdrant check failed at %s: %s", path, exc)
         return QdrantHealth(ok=False, path=path, error=f"{type(exc).__name__}: {exc}")
     return QdrantHealth(ok=True, path=path)

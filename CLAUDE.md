@@ -287,6 +287,9 @@ is a non-streaming UI with a "Thinking…" indicator. Rules:
   timeouts well above that.
 - During ingestion only `bge-m3` is needed — embed all child chunks in one batched pass so
   the LLM is never swapped in mid-ingest.
+- Qdrant's `data/vectors/.lock` is advisory and **does not go stale**: the AI service was
+  hard-killed and restarted successfully (verified 2026-11-21), so a crashed service needs no
+  manual lock cleanup. The single-writer rule still holds for *concurrent* processes.
 - If this latency proves unacceptable during the 4.8 calibration pass, the documented escape
   hatch is the §3 fallback `qwen3:4b` (~3.3 GB, co-resident with `bge-m3`, no swapping) at the
   cost of a weaker Verifier. Changing it requires updating §3 and §11 in the same change.
@@ -573,14 +576,19 @@ messages and branch names (e.g. `feature/2.3-vector-store`).
 
 | # | Task | Key files | Done when |
 |---|---|---|---|
-| 0.1 | `git init`, `.gitignore` (`data/`, `.env`, `.venv/`, `node_modules/`), `.gitattributes`, README stub | root | `git status` clean, no data/env tracked |
-| 0.2 | Backend scaffold: `uv` project, app factory, `config.py` via pydantic-settings, ruff cfg (line 100), startup creates `data/*` dirs | `backend/pyproject.toml`, `app/main.py`, `app/config.py`, `.env.example` | `uv run uvicorn app.main:app` boots |
-| 0.3 | AI service scaffold + `X-Internal-Key` dependency, binds `127.0.0.1` | `ai/ai_service/main.py`, `config.py`, `security.py` | wrong key → 401 |
-| 0.4 | Health endpoints: AI checks Ollama reachable + `qwen3:8b`/`bge-m3` present + Qdrant opens; backend `/api/health` proxies it | `routers/health.py` (both services) | both return green with Ollama running |
-| 0.5 | Frontend scaffold: Vite + React + TS strict, Tailwind, Router, TanStack Query, ESLint/Prettier/Vitest, `src/api/client.ts` | `frontend/` | `npm run dev`, `lint`, `typecheck`, `test` all pass |
-| 0.6 | ~~Pull models, confirm `ollama ps` shows **100% GPU** at `num_ctx=8192`~~ | — | ✅ **done 2026-11-21** — both models pulled, both 100% GPU; findings in §2 and §6.8 |
+| ✅ 0.1 | `git init`, `.gitignore` (`data/`, `.env`, `.venv/`, `node_modules/`), `.gitattributes`, README stub | root | `git status` clean, no data/env tracked |
+| ✅ 0.2 | Backend scaffold: `uv` project, app factory, `config.py` via pydantic-settings, ruff cfg (line 100), startup creates `data/*` dirs | `backend/pyproject.toml`, `app/main.py`, `app/config.py`, `.env.example` | `uv run uvicorn app.main:app` boots |
+| ✅ 0.3 | AI service scaffold + `X-Internal-Key` dependency, binds `127.0.0.1` | `ai/ai_service/main.py`, `config.py`, `security.py` | wrong key → 401 |
+| ✅ 0.4 | Health endpoints: AI checks Ollama reachable + `qwen3:8b`/`bge-m3` present + Qdrant opens; backend `/api/health` proxies it | `routers/health.py` (both services) | both return green with Ollama running |
+| ✅ 0.5 | Frontend scaffold: Vite + React + TS strict, Tailwind, Router, TanStack Query, ESLint/Prettier/Vitest, `src/api/client.ts` | `frontend/` | `npm run dev`, `lint`, `typecheck`, `test` all pass |
+| ✅ 0.6 | ~~Pull models, confirm `ollama ps` shows **100% GPU** at `num_ctx=8192`~~ | — | ✅ **done 2026-11-21** — both models pulled, both 100% GPU; findings in §2 and §6.8 |
 
-**Gate:** all three services start in separate terminals; `/api/health` green.
+**Gate: PASSED 2026-11-21.** All three services start; `/api/health` reports `ok` with both
+models detected and Qdrant open. Verified: 401 without the internal key, 200 with it, nested
+health through the backend, `degraded` (200, ~instant) with the AI service stopped, the `data/`
+tree created with absolute paths logged, `data/`+`.env`+`node_modules` untracked, and the Vite
+dev server serving the shell with Tailwind compiling. Checks: backend 14 tests, AI 12 tests,
+frontend 3 tests, ruff + ruff format + ESLint + tsc + prettier all clean.
 
 ### Phase 1 — Auth & data model (M2)
 
