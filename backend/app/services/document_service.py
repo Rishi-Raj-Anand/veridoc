@@ -24,7 +24,7 @@ from app.models import Document
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_EXTENSIONS = frozenset({".pdf", ".txt", ".md", ".docx"})
+ALLOWED_EXTENSIONS = frozenset({".pdf", ".txt", ".md", ".docx", ".csv"})
 CHUNK_BYTES = 1024 * 1024
 MAX_SAFE_NAME_CHARS = 100
 MAX_DISPLAY_NAME_CHARS = 255
@@ -88,7 +88,7 @@ def _check_signature(suffix: str, head: bytes) -> None:
         raise UploadRejected(415, "file is not a valid PDF")
     if suffix == ".docx" and not head.startswith(b"PK\x03\x04"):
         raise UploadRejected(415, "file is not a valid DOCX")
-    if suffix in {".txt", ".md"} and b"\x00" in head:
+    if suffix in {".txt", ".md", ".csv"} and b"\x00" in head:
         raise UploadRejected(415, "file does not look like text")
 
 

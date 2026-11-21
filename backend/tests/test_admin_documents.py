@@ -383,3 +383,16 @@ async def test_a_regular_user_is_403_everywhere(client: httpx.AsyncClient, fake_
 
     assert [r.status_code for r in responses] == [403, 403, 403]
     assert fake_ai.ingested == []
+
+
+async def test_a_csv_upload_is_accepted_and_sent_for_ingestion(
+    client: httpx.AsyncClient, fake_ai: FakeAi
+) -> None:
+    async with client:
+        response = await upload(
+            client, await admin_headers(client), "diseases.csv", b"Disease,Symptoms\nFlu,fever\n"
+        )
+
+    assert response.status_code == 201
+    assert response.json()["filename"] == "diseases.csv"
+    assert fake_ai.ingested[0][2] == "diseases.csv"

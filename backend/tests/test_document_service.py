@@ -171,3 +171,17 @@ def test_mark_interrupted_ingests_fails_only_pending_rows(db: Session, settings:
     db.refresh(ready)
     assert (pending.status, pending.error) == ("failed", INTERRUPTED_MESSAGE)
     assert ready.status == "ready"
+
+
+def test_a_csv_is_accepted_and_stored_like_text(db: Session, settings: Settings) -> None:
+    document = upload(db, settings, b"Disease,Symptoms\nMalaria,fever\n", "Diseases.csv")
+
+    assert document.status == "pending"
+    assert document.stored_path == f"uploads/{document.id}_Diseases.csv"
+
+
+def test_a_binary_file_named_csv_is_415(db: Session, settings: Settings) -> None:
+    with pytest.raises(UploadRejected) as excinfo:
+        upload(db, settings, b"a,b" + bytes([0]) + b"c", "fake.csv")
+
+    assert excinfo.value.status_code == 415

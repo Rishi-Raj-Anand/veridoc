@@ -163,3 +163,29 @@ def test_normalise_text_strips_invisible_characters_but_keeps_joiners() -> None:
     zwj = chr(0x200D)
     assert normalise_text(f"EDU{zwsp}CATION{bom} {word_joiner}ok") == "EDUCATION ok"
     assert normalise_text(f"a{zwj}b") == f"a{zwj}b"
+
+
+def test_csv_becomes_one_section_per_entry(tmp_path: Path) -> None:
+    path = tmp_path / "diseases.csv"
+    path.write_text(
+        "Disease,Symptom_1,Symptom_2,Precaution\n"
+        "Malaria,chills,high_fever,use mosquito net\n"
+        "Malaria,vomiting,,\n"
+        "Common Cold,continuous_sneezing,,rest\n",
+        encoding="utf-8-sig",  # an Excel "CSV UTF-8" file starts with a BOM
+    )
+
+    pages = parse_document(path)
+
+    assert [p.page for p in pages] == [1, 2]  # duplicate titles merged into one entry
+    assert pages[0].text.startswith("## Malaria")
+    assert "- **Symptom:** chills; high fever; vomiting" in pages[0].text
+    assert "continuous sneezing" in pages[1].text  # underscores become spaces
+
+
+def test_a_csv_with_no_data_rows_fails_with_a_clear_message(tmp_path: Path) -> None:
+    path = tmp_path / "empty.csv"
+    path.write_text("Disease,Symptoms\n", encoding="utf-8")
+
+    with pytest.raises(ParseError, match=r"CSV could not be converted: .*no data rows"):
+        parse_document(path)

@@ -20,7 +20,7 @@ The first version is a medical-information assistant:
 6. The admin can tune the assistant's tone, scope, refusal text and extra guardrails from the admin page. These only add restrictions; the §7 rules stay locked (§6.9).
 
 ### Hard constraints
-- **Text only.** Supported uploads: **PDF, TXT, MD, DOCX**. No images, audio, video, or scanned/OCR PDFs — reject them with a clear error. **CSV is not uploaded directly:** convert it to Markdown first with `ai_service.ingestion.csv_to_md` (§12).
+- **Text only.** Supported uploads: **PDF, TXT, MD, DOCX, CSV**. No images, audio, video, or scanned/OCR PDFs — reject them with a clear error. A CSV is converted to Markdown during ingestion, one section per entry (§6.1).
 - **All AI runs locally through Ollama** (generation + embeddings). Never add OpenAI, Anthropic, or any cloud LLM/embedding API.
 - **Exactly one admin account**, created at startup from environment variables. Users cannot become admin.
 - **Windows + PowerShell** is the development environment. All commands and paths must work there.
@@ -190,9 +190,9 @@ veridoc/
 ## 6. AI pipeline specification
 
 ### 6.1 Ingestion (admin upload)
-1. Backend receives the upload, validates extension (`.pdf .txt .md .docx`) and size (`MAX_UPLOAD_MB`), computes SHA-256, rejects duplicates, saves to `data/uploads/`, inserts a `documents` row with `status="pending"`.
+1. Backend receives the upload, validates extension (`.pdf .txt .md .docx .csv`; text types must contain no NUL bytes) and size (`MAX_UPLOAD_MB`), computes SHA-256, rejects duplicates, saves to `data/uploads/`, inserts a `documents` row with `status="pending"`.
 2. Backend (FastAPI `BackgroundTasks`) calls AI `POST /internal/ingest` with a long timeout.
-3. AI service parses to text **with page numbers** (PDF pages; DOCX/MD → a heading-based **section index**: section 1 until the first heading, then one per Heading 1/2 or `#`/`##`; TXT, or any file without headings → page 1). If a PDF yields almost no text, fail with `"scanned or image-only PDF is not supported"`.
+3. AI service parses to text **with page numbers** (PDF pages; DOCX/MD → a heading-based **section index**: section 1 until the first heading, then one per Heading 1/2 or `#`/`##`; TXT, or any file without headings → page 1; CSV → converted by `csv_to_md` into one `##` section per entry, with underscores turned into spaces, so "page" N is the N-th entry). If a PDF yields almost no text, fail with `"scanned or image-only PDF is not supported"`.
 4. **Chunking (parent–child):**
    - Parent chunks ≈ **800 tokens**, split on paragraph/heading boundaries where possible.
    - Child chunks ≈ **300 tokens** with **50 token overlap**, each linked to its `parent_id`.
@@ -567,7 +567,7 @@ uv run alembic upgrade head
 
 **Check GPU usage** — `ollama ps` should show the model at `100% GPU`. If it shows CPU, the context or model is too large for 8 GB.
 
-**Convert a CSV for upload** (standard library only; writes `<name>.md` next to the CSV)
+**Preview a CSV conversion** (standard library only; writes `<name>.md` next to the CSV). A `.csv` can be uploaded directly, and ingestion runs this same conversion with `--underscores-to-spaces`. Use the command to see what will be indexed, or to choose a different `--title-column` or `--layout` and upload the `.md` instead.
 ```powershell
 cd ai
 uv run python -m ai_service.ingestion.csv_to_md path\to\diseases.csv
@@ -829,6 +829,7 @@ retrieval. Lands before Phase 7 so the evaluation measures the pipeline that shi
 - ✅ **6B.6** Frontend: `/admin/behaviour` page with tabs, counters, Save / Discard / Restore defaults, locked rules; small-talk and refusal bubbles.
 - ✅ **6B.7** Tests: AI 387 (+8 live behind `-m ollama`), backend 160, frontend 35 (6 files); ruff, ESLint, `tsc`, Prettier, `vite build` clean.
 - ✅ **6B.8** Live gate in a real browser.
+- ✅ **6B.9** Direct CSV upload (added after the gate): backend accepts `.csv`; `parsers.parse_csv` converts it to one section per entry (`ingestion/csv_to_md.py`). Live check on a throwaway stack: a 3-row CSV went `ready` in ~8 s, and "What are the symptoms of typhoid?" was answered `verified`, citing `live.csv` p. 1 and combining two merged rows.
 
 **Gate: PASSED 2026-11-21.** Playwright drove headless Chrome against a throwaway stack (ports 18000/18001/15173, scratch `DATA_DIR`, real `qwen3:8b` + `bge-m3`); the real `data/` was not touched. 15/15 checks, no browser console errors, and the AI service's own log agreed on every route:
 

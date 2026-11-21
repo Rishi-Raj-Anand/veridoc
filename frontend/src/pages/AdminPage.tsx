@@ -74,7 +74,8 @@ export function AdminPage() {
         <h2 className="text-sm font-semibold text-slate-700">Upload a document</h2>
         <p className="mt-1 text-sm text-slate-500">
           Text-based {ACCEPTED_EXTENSIONS.join(", ")} files only. Scanned or image-only PDFs are
-          rejected.
+          rejected. A CSV becomes one searchable section per row (its first column is the heading),
+          so each row can be cited on its own.
         </p>
         <div className="mt-3 flex items-center gap-3">
           <input
