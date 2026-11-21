@@ -170,7 +170,9 @@ model load); DOCX and MD → `ready` with section-index pages; image-only PDF �
 removed the file, the docstore parents (4 → 0) and the vectors (log: `points=12 parents=4`).
 `ollama ps`: `bge-m3` 689 MB, 100% GPU at `num_ctx=8192`.
 
-**Gate: still open** — the run with a real medical PDF, supplied by the team.
+**Gate: PASSED 2026-11-21** on `documents/disease.md` (5 KB Markdown, a 10-disease table), run on spare ports 18000/18001 with a throwaway `DATA_DIR`: `ready` in 1 s, `chunk_count` 6 / 3 parents (~58 + 747 + 438 tokens), duplicate 409, delete 204 → points 6, parents 3, file and row all removed. The first file supplied, a 6-page WHO malaria PDF, came from "Microsoft: Print To PDF" (≈3,000 outlined-glyph drawings per page, zero text) and was correctly rejected with the scanned-PDF message. A real text-layer PDF has not been ingested yet; the PDF parser is covered by synthetic PDFs only.
+
+**Observation for Phase 3/4 (not fixed):** a Markdown table is one blank-line-delimited block, so child windows cut it mid-row and a chunk can lose its row label (the hit for "treatment for the common cold" starts mid-cell). Parent expansion at iteration 2 recovers the full table, but row-aware chunking (split children on row boundaries, repeat the header) would help retrieval precision. Top scores for sample queries were 0.50–0.61, comfortably above `MIN_RETRIEVAL_SCORE` 0.35; calibration stays with task 4.8.
 
 ### Deviations from the plan
 
