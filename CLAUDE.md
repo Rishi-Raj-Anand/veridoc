@@ -570,7 +570,7 @@ uv run alembic upgrade head
 **Convert a CSV for upload** (standard library only; writes `<name>.md` next to the CSV)
 ```powershell
 cd ai
-uv run python -m ai_service.ingestion.csv_to_md path	o\diseases.csv
+uv run python -m ai_service.ingestion.csv_to_md path\to\diseases.csv
 # options: --title-column Disease | --layout table | --underscores-to-spaces | --out x.md | --force
 ```
 - **Default layout:** one `## <title>` section per entry, so a citation's "p. N" is the N-th entry. The title is the first column unless `--title-column` names another.
