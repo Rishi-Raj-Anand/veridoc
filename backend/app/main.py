@@ -14,7 +14,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import Settings, get_settings
-from app.routers import health
+from app.db import get_sessionmaker
+from app.routers import auth, health
+from app.services.auth_service import seed_admin
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +47,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             "still using placeholder values for %s - set real values in backend/.env",
             ", ".join(insecure),
         )
+    with get_sessionmaker()() as db:
+        seed_admin(db, settings)
     yield
 
 
@@ -66,6 +70,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(health.router, prefix="/api")
+    app.include_router(auth.router, prefix="/api")
     return app
 
 
