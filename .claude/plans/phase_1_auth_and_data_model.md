@@ -2,8 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ✅ **Built — gate passed 2026-11-21** |
-| **Branch** | `feature/phase-1-auth` |
+| **Status** | ✅ **Complete — gate passed and merged to `main` 2026-11-21** |
+| **Branch** | `feature/phase-1-auth` (merged, then deleted) |
+| **Commits** | `f430898` · `0af1c83` · `4e9b0d1` · `d91cfc7` · `a2e7b24`, merged as `3f6038a` |
 | **Tasks** | 1.1 – 1.6 |
 | **Gate** | `uv run ruff check . ; uv run ruff format --check . ; uv run pytest` green in `backend/` |
 | **Touches** | `backend/` only — no AI service, no frontend |
@@ -327,7 +328,9 @@ database refuses to boot naming `uv run alembic upgrade head`.
   yet** — that happens the first time the backend starts. Nothing else was written to it.
 - `ADMIN_PASSWORD` in the local `.env` is still the weak `12345`. Seeding bypasses the 8-character
   rule by design; change it before any non-local exposure.
-- Committed on `feature/phase-1-auth` as five commits (dependency, data model, auth, tests, docs).
+- Committed as five commits (dependency, data model, auth, tests, docs) and merged to `main` with a
+  no-fast-forward merge commit, `3f6038a`. The feature branch was then deleted; `main` re-tested at
+  58 passing.
 
 ## Next — Phase 2: Ingestion (Milestone 3)
 
