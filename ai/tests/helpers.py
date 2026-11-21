@@ -7,9 +7,14 @@ from typing import Any
 import httpx
 import pytest
 from fastapi import FastAPI
+from qdrant_client import QdrantClient
 
+from ai_service.config import get_settings
 from ai_service.llm import ollama_client
+from ai_service.llm.ollama_client import OllamaError
 from ai_service.main import create_app
+from ai_service.retrieval.docstore import Docstore
+from ai_service.retrieval.vector_store import VectorStore
 
 INTERNAL_KEY = "test-internal-key"
 
@@ -43,6 +48,20 @@ class FakeOllamaClient:
         return {"models": [{"model": name} for name in self.models]}
 
 
+class FakeEmbedder:
+    """Stand-in for ``OllamaClient``: deterministic 1024-dim vectors, optional failure."""
+
+    def __init__(self, *, fails: bool = False) -> None:
+        self.fails = fails
+        self.calls: list[list[str]] = []
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        self.calls.append(list(texts))
+        if self.fails:
+            raise OllamaError("cannot reach Ollama at http://127.0.0.1:11434 - is it running?")
+        return [[float(len(text) % 7 + 1)] + [0.0] * 1023 for text in texts]
+
+
 def build_app(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -62,6 +81,12 @@ def build_app(
     monkeypatch.setattr(ollama_client.ollama, "Client", client_factory)
     app = create_app()
     app.state.qdrant = FakeQdrant() if qdrant == "default" else qdrant
+    settings = get_settings()
+    store = VectorStore(QdrantClient(":memory:"), settings)
+    store.ensure_collection()
+    app.state.vector_store = store
+    app.state.docstore = Docstore(settings.docstore_path)
+    app.state.llm = FakeEmbedder()
     return app
 
 
