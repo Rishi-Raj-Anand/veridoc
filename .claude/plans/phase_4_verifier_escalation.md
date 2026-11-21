@@ -219,3 +219,15 @@ The parent-only gate was first run against a 2-chunk synthetic document and pass
 | 5.3 safety | `emergency` is still always `false`; the notice is prefixed at the end of the turn, after `finalize` |
 | 7.3 ablation | single-pass without the Verifier can be had with `MAX_ITERATIONS=1` plus a verifier stub, or by calling `Generator` directly |
 | running services | the AI service on `:8001` runs without `--reload`, so it must be restarted to pick up Phase 4 |
+
+## Close-out (2026-11-21)
+
+**Final state of `main`:** merge `9f1e5e0`, then `7ed20c5` (plan record). AI service 180 tests (+4 live behind `-m ollama`, all passing against real Ollama), backend 148 tests, `ruff check` and `ruff format --check` clean in both, re-run on `main` after the merge. Only `main` remains: the feature branch was deleted, there are no stashes and no remotes.
+
+**Clean-up performed:** the calibration driver, its throwaway `DATA_DIR`, logs, results and the synthetic migraine document were removed from the scratch area; ports 18000/18001 are free; the developer's real `data/` (`chats/` still empty) and `documents/` were not touched.
+
+**Servers:** the AI service on `:8001` (no `--reload`) was restarted on the Phase 4 code after the new variables were added to `ai/.env` (`TOP_K_PRECISION`, `TOP_K_LEVEL2`, `MAX_PARENTS_LEVEL2`, `TOP_K_LEVEL3`, `MAX_PARENTS_LEVEL3`, `CONTEXT_MAX_TOKENS`, `HISTORY_MAX_TOKENS`, each with a comment). `/internal/health` is `ok` (Ollama, both models, Qdrant on the real `data/vectors`), it returns 401 without the key, and the backend on `:8000` reports `ok` through it. Note: the restarted service was started from the Claude Code session, not from the developer's own terminal.
+
+**Not done here:** a live chat against the real `data/`: it has no documents indexed yet, so a question would fall back until one is uploaded.
+
+**Left alone (not from this phase):** an untracked `.vscode/settings.json` (`python.terminal.useEnvFile`) and an uncommitted one-line change to `CLAUDE.md` that replaces a blank line in *Settled decisions* with the text `ya`, which looks accidental. Both were already in the working tree and were excluded from the Phase 4 commits.
