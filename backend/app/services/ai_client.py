@@ -7,11 +7,13 @@ service and authenticates with the shared ``X-Internal-Key``.
 from __future__ import annotations
 
 import logging
+from uuid import UUID
 
 import httpx
 from pydantic import ValidationError
 
 from app.config import Settings
+from app.schemas.chat import ChatResponse
 from app.schemas.document import IngestResult
 from app.schemas.health import AiServiceHealth
 
@@ -21,6 +23,8 @@ HEALTH_TIMEOUT_SECONDS = 5.0
 # Ingestion parses, embeds and indexes a whole document (§6.8): minutes, not seconds.
 INGEST_TIMEOUT_SECONDS = 600.0
 DELETE_TIMEOUT_SECONDS = 30.0
+# A turn can load models and run up to three retrieval rounds (§6.8: 30-90 s); stay well above.
+CHAT_TIMEOUT_SECONDS = 300.0
 
 
 class AiServiceError(RuntimeError):
@@ -125,3 +129,20 @@ async def delete_document_index(settings: Settings, doc_id: int) -> None:
     await _call(
         settings, "DELETE", f"/internal/documents/{doc_id}", timeout_seconds=DELETE_TIMEOUT_SECONDS
     )
+
+
+async def send_chat(
+    settings: Settings, session_id: UUID, user_id: int, message: str
+) -> ChatResponse:
+    """Run one chat turn on the AI service and return its ``ChatResponse`` (§9)."""
+    response = await _call(
+        settings,
+        "POST",
+        "/internal/chat",
+        timeout_seconds=CHAT_TIMEOUT_SECONDS,
+        json={"session_id": str(session_id), "user_id": user_id, "message": message},
+    )
+    try:
+        return ChatResponse.model_validate(response.json())
+    except (ValidationError, ValueError) as exc:
+        raise AiServiceError("AI service sent an unexpected chat response") from exc
