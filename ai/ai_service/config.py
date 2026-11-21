@@ -14,6 +14,17 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_INTERNAL_KEY = "change-me-shared-secret"
 
+# User-facing medical text (CLAUDE.md §7.4, §7.5). Defined here and nowhere else; the
+# pipeline and the API both read these constants.
+FALLBACK_MESSAGE = (
+    "I couldn't find verified information in my medical references to answer this safely. "
+    "Please consult a qualified doctor."
+)
+DISCLAIMER = (
+    "VeriDoc AI provides information from reference documents and is not a substitute for "
+    "professional medical advice, diagnosis, or treatment."
+)
+
 
 class Settings(BaseSettings):
     """Values from ``ai/.env``; see ``ai/.env.example``."""
@@ -36,6 +47,7 @@ class Settings(BaseSettings):
     min_retrieval_score: float = 0.35
     max_iterations: int = 3
     history_max_messages: int = 6
+    top_k_precision: int = 3  # iteration-1 retrieval (§6.3)
     # Chunking and embedding shape (§6.1). Changing any of these means re-ingesting
     # every document: existing vectors and parents were built with the old values.
     parent_chunk_tokens: int = 800

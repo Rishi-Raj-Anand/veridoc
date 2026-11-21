@@ -15,11 +15,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from qdrant_client import QdrantClient
 
+from ai_service.agents.generator import Generator
 from ai_service.config import DEFAULT_INTERNAL_KEY, Settings, get_settings
+from ai_service.graph.pipeline import build_pipeline
 from ai_service.llm.ollama_client import OllamaClient
 from ai_service.retrieval.docstore import Docstore
+from ai_service.retrieval.retriever import Retriever
 from ai_service.retrieval.vector_store import VectorStore
-from ai_service.routers import health, ingest
+from ai_service.routers import chat, health, ingest
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +86,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         raise
     app.state.vector_store = store
     app.state.docstore = Docstore(settings.docstore_path)
-    app.state.llm = OllamaClient(settings)
+    llm = OllamaClient(settings)
+    app.state.llm = llm
+    try:
+        generator = Generator(llm, settings)  # loads prompts/generator.md; fails loudly if absent
+        app.state.pipeline = build_pipeline(Retriever(store, llm, settings), generator)
+    except Exception:
+        await asyncio.to_thread(client.close)
+        raise
     logger.info("docstore     : %s", settings.docstore_path)
     try:
         yield
@@ -91,6 +101,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await asyncio.to_thread(client.close)
         app.state.qdrant = None
         app.state.vector_store = None
+        app.state.pipeline = None
         logger.info("qdrant local storage closed")
 
 
@@ -104,7 +115,9 @@ def create_app() -> FastAPI:
     )
     app.include_router(health.router)
     app.include_router(ingest.router)
+    app.include_router(chat.router)
     app.state.ingest_lock = asyncio.Lock()
+    app.state.chat_lock = asyncio.Lock()
     return app
 
 

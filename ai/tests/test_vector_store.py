@@ -99,3 +99,28 @@ def test_delete_of_unknown_document_is_a_noop(store: VectorStore) -> None:
 def test_mismatched_vectors_are_rejected(store: VectorStore) -> None:
     with pytest.raises(VectorStoreError):
         store.upsert_children(1, "a.pdf", [child(0), child(1)], [vec(1.0)])
+
+
+def test_search_ranks_by_cosine_and_returns_the_payload(store: VectorStore) -> None:
+    along = [1.0] + [0.0] * (DIM - 1)
+    close = [0.6, 0.8] + [0.0] * (DIM - 2)
+    across = [0.0, 1.0] + [0.0] * (DIM - 2)
+    store.upsert_children(1, "a.pdf", [child(0, "far"), child(1, "near")], [across, close])
+    store.upsert_children(2, "b.pdf", [child(0, "exact")], [along])
+
+    hits = store.search(along, limit=10)
+
+    assert [h.text for h in hits] == ["exact", "near", "far"]
+    assert hits[0].score == pytest.approx(1.0)
+    assert hits[1].score == pytest.approx(0.6)
+    assert (hits[0].doc_id, hits[0].filename, hits[0].page) == (2, "b.pdf", 2)
+    assert hits[1].parent_id == "1:p00000"
+    assert hits[1].chunk_index == 1
+
+
+def test_search_respects_limit_and_handles_an_empty_collection(store: VectorStore) -> None:
+    assert store.search(vec(1.0), limit=3) == []
+
+    store.upsert_children(1, "a.pdf", [child(i) for i in range(5)], [vec(1.0)] * 5)
+
+    assert len(store.search(vec(1.0), limit=3)) == 3
