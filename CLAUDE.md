@@ -16,6 +16,8 @@ The first version is a medical-information assistant:
 2. **Users** register, log in, and chat with Doctor AI, which suggests medication or other remedies **only from the uploaded documents**, with citations.
 3. Doctor AI remembers earlier messages **within the same chat session**. There is **no chat history UI** — every visit starts a fresh session.
 4. Users see **only the final verified answer** (no live agent states, no scores).
+5. Doctor AI also handles **small talk** ("hi", "thanks") with a short friendly reply containing no medical information, and **declines off-topic requests** (chores, recipes, coding, homework) with a fixed, admin-editable message (§6.9).
+6. The admin can tune the assistant's tone, scope, refusal text and extra guardrails from the admin page. These only add restrictions; the §7 rules stay locked (§6.9).
 
 ### Hard constraints
 - **Text only.** Supported uploads: **PDF, TXT, MD, DOCX**. No images, audio, video, or scanned/OCR PDFs — reject them with a clear error.
@@ -136,6 +138,7 @@ veridoc/
 │   ├── vectors/               # Qdrant local storage
 │   ├── docstore.db            # AI service: parent chunks
 │   ├── chats/                 # <session_id>.json transcripts
+│   ├── behaviour.json         # AI service: admin-editable assistant behaviour (§6.9)
 │   └── eval/                  # RAGAS result CSVs
 ├── frontend/
 │   ├── .env.example           # VITE_API_URL
@@ -173,7 +176,7 @@ veridoc/
     │   ├── routers/           # ingest.py, chat.py, health.py
     │   ├── ingestion/         # parsers.py, chunker.py, indexer.py
     │   ├── retrieval/         # vector_store.py, docstore.py, retriever.py
-    │   ├── agents/            # generator.py, verifier.py, condenser.py, safety.py
+    │   ├── agents/            # generator, verifier, condenser, safety, classifier, smalltalk
     │   ├── graph/             # state.py, pipeline.py (LangGraph)
     │   ├── prompts/           # *.md prompt templates (never inline long prompts)
     │   ├── llm/               # ollama_client.py (single wrapper for all calls)
@@ -203,17 +206,22 @@ veridoc/
 ### 6.2 Query pipeline (LangGraph state machine)
 
 ```
-safety_check → condense_query → retrieve → generate → verify
-                                   ▲                    │
-                                   │   fail & iter < 3  │
-                                   └──── escalate ◄─────┤
-                                                        │ pass          → finalize
-                                                        │ fail & iter=3 → fallback
+safety_check → classify_intent ─┬─ smalltalk    → smalltalk_reply → end
+                                ├─ out_of_scope → decline         → end
+                                └─ medical      → condense_query → retrieve → generate → verify
+                                                                      ▲                    │
+                                                                      │   fail & iter < 3  │
+                                                                      └──── escalate ◄─────┤
+                                                                                           │ pass          → finalize
+                                                                                           │ fail & iter=3 → fallback
 ```
 
 | Node | Behaviour |
 |---|---|
 | `safety_check` | Deterministic keyword/regex match (list in `ai_service/agents/safety_terms.yaml`) for red-flag emergencies (chest pain, difficulty breathing, stroke signs, severe bleeding, suicidal thoughts, poisoning/overdose, unconsciousness, etc.). It scans the raw message, and `condense_query` scans the standalone question too (OR-ed), so a follow-up that only means an emergency once the earlier turns are folded in is still flagged. If matched, set `emergency=true` — the final response, a fallback included, is **prefixed** with the emergency notice (§7). The pipeline still runs. False positives ("no chest pain") are accepted on purpose. |
+| `classify_intent` | §6.9. An emergency (`safety_check` matched) is always `medical` and is never classified. A plain greeting/thanks/goodbye is `smalltalk` by regex, with no LLM call. Anything else is one structured-output call (`temperature=0`) returning `medical`, `smalltalk` or `out_of_scope`; unsure, mixed ("hi, what is malaria?") or unparseable → `medical`. |
+| `smalltalk_reply` | A short LLM reply (≤ 3 sentences, `temperature=0.3`) with **no medical content**, `status="smalltalk"`, no citations. |
+| `decline` | Returns the admin's `out_of_scope_message` verbatim, `status="out_of_scope"`, no LLM call. |
 | `condense_query` | If the session has prior turns, rewrite the latest message into a **standalone question** using the last turns (e.g. "what about for children?" → "What is the treatment for migraine in children?"). First message passes through unchanged (no LLM call). A message that names no subject of its own ("what should I do now?") inherits the conversation's subject. Only the condenser sees history; the Generator and Verifier see the standalone question and the sources. |
 | `retrieve` | Behaviour depends on `iteration` (§6.3). |
 | `generate` | Generator answers **only** from the provided context, cites every claim as `[n]` mapped to sources. If the context lacks the answer, it must say so. |
@@ -304,6 +312,35 @@ is a non-streaming UI with a "Thinking…" indicator. Rules:
   hatch is the §3 fallback `qwen3:4b` (~3.3 GB, co-resident with `bge-m3`, no swapping) at the
   cost of a weaker Verifier. Changing it requires updating §3 and §11 in the same change.
 
+### 6.9 Intent routing and assistant behaviour
+
+Not every message is a medical question. Before this step, "hi" went through retrieval, found
+nothing, and got the §7.4 fallback. `classify_intent` (§6.2) now routes each message:
+
+| Intent | Example | Reply | Status |
+|---|---|---|---|
+| `medical` | "what helps a migraine?" | the dual-agent RAG loop, unchanged | `verified` / `fallback` |
+| `smalltalk` | "hi", "how are you?", "thanks!" | short LLM reply, no medical content | `smalltalk` |
+| `out_of_scope` | "pasta recipe", "fix my code" | the admin's refusal text, verbatim | `out_of_scope` |
+
+- **Safety first.** An emergency is always `medical`; when in doubt the answer is `medical`,
+  because the RAG loop can only answer from the documents or fall back.
+- The classifier sees the last exchange (≤ 300 characters per message), so a follow-up such
+  as "what about for kids?" stays medical. It runs before retrieval while `qwen3:8b` is
+  usually still resident (§6.8), so it rarely adds a model swap. Small talk and declines never
+  load `bge-m3`.
+- **Assistant behaviour** lives in `data/behaviour.json`, owned by the AI service
+  (`GET/PUT /internal/behaviour`, proxied by the backend for the admin). Fields and caps:
+  `persona` (600), `scope` (600), `out_of_scope_message` (400), `extra_guardrails` (1,500).
+  The caps are mirrored in the backend schema and the frontend. Edits apply from the next
+  message, with no restart.
+- `scope` goes to the classifier; `persona` and `extra_guardrails` are appended to the
+  Generator and small-talk prompts **after** the fixed rules, under a heading saying they
+  cannot override them. The **Verifier never sees admin text**.
+- `LOCKED_RULES` in `ai_service/config.py` states the §7 rules in plain words; the admin page
+  shows them read-only.
+- Transcripts record `intent` on every assistant entry.
+
 ---
 
 ## 7. Medical safety rules (non-negotiable)
@@ -318,6 +355,7 @@ is a non-streaming UI with a "Thinking…" indicator. Rules:
    > VeriDoc AI provides information from reference documents and is not a substitute for professional medical advice, diagnosis, or treatment.
 6. Never present output as a diagnosis. Phrase as "the references suggest…".
 7. Do not weaken, bypass, or remove these rules (including for testing) without explicit approval.
+8. **Small talk and off-topic.** Small-talk replies never contain medical information, and off-topic requests are declined (§6.9). An emergency is never treated as either. The admin's behaviour text can add restrictions but can never override or relax rules 1–7, and the disclaimer (rule 5) is attached to small-talk and refusal replies too.
 
 ---
 
@@ -353,6 +391,8 @@ chat_sessions
 | POST | `/api/chat/message` | user | `{session_id, message}` → `ChatResponse`. `message` is 1–2000 characters. Any signed-in user may chat, the admin included. **401** anonymous, **403** a session owned by another user, **422** bad UUID / empty / over-long message, **503** (friendly text) when the AI service fails |
 | POST | `/api/admin/documents` | admin | multipart upload → document (status `pending`). Rejections: **415** wrong extension or content not matching it, **413** over `MAX_UPLOAD_MB`, **422** empty, **409** duplicate SHA-256 |
 | GET | `/api/admin/documents` | admin | list documents with status |
+| GET | `/api/admin/behaviour` | admin | `{settings, defaults, locked_rules, updated_at}` (§6.9). **503** (friendly) if the AI service is down |
+| PUT | `/api/admin/behaviour` | admin | `{persona, scope, out_of_scope_message, extra_guardrails}` → same shape as GET. **422** over a cap, an empty `scope`/`out_of_scope_message`, or an unknown field; **503** nothing saved |
 | DELETE | `/api/admin/documents/{id}` | admin | delete file + vectors + row → 204. **409** while the document is `pending`; **503** (nothing removed) if the AI service cannot delete its index |
 | GET | `/api/health` | — | backend + AI service health |
 
@@ -361,7 +401,7 @@ chat_sessions
 {
   "answer": "markdown text with [1] [2] citations",
   "citations": [{"n": 1, "filename": "who_guidelines.pdf", "page": 12}],
-  "status": "verified | fallback",
+  "status": "verified | fallback | smalltalk | out_of_scope",
   "emergency": false,
   "disclaimer": "..."
 }
@@ -374,6 +414,7 @@ chat_sessions
 | DELETE | `/internal/documents/{doc_id}` | remove vectors + parents → `{deleted_points, deleted_parents}`; idempotent |
 | POST | `/internal/chat` | `{session_id, user_id, message}` → `ChatResponse` |
 | GET | `/internal/health` | Ollama reachable, models pulled, Qdrant open |
+| GET / PUT | `/internal/behaviour` | read / replace the assistant behaviour (§6.9); PUT validates the caps |
 
 Errors use FastAPI's standard `{"detail": "..."}` with proper status codes. The backend maps AI-service failures to `503` with a friendly message.
 
@@ -386,6 +427,7 @@ Errors use FastAPI's standard `{"detail": "..."}` with proper status codes. The 
   - `/login` and `/register`.
   - `/chat`: any signed-in user, the admin included.
   - `/admin`: admin only. It has a system status card, upload, the document list with status, and delete.
+  - `/admin/behaviour`: admin only. "How Doctor AI handles a message", the four §6.9 fields with counters (Save / Discard changes / Restore defaults), and the locked safety rules, read-only. Tabs link the two admin pages.
   - A custom, light-hearted **404 page** for every unknown path.
 - Route guards by role: a signed-out visitor goes to `/login` and comes back afterwards, and a user who opens `/admin` goes to `/chat`.
 - The landing and 404 pages are standalone full-bleed layouts. The other pages share one app header with the logo, Chat, Admin (admin only), the user's email and Log out.
@@ -397,6 +439,7 @@ Errors use FastAPI's standard `{"detail": "..."}` with proper status codes. The 
 - No external fonts, CDNs or analytics: use the system font stack and inline SVG only.
 - Render answers as Markdown with a sanitizing renderer (`react-markdown`, no raw HTML).
 - No history sidebar. Refreshing the page starts a new session.
+- Small-talk and off-topic replies render as plain bubbles (no Sources list; off-topic has a muted style) with the disclaimer, like every reply. Users never see the `status` word.
 
 ---
 
@@ -762,11 +805,41 @@ Browser walkthrough: Playwright (installed outside the repo, not a project depen
 
 Two things the run turned up: a missing favicon made every page load log a 404 (fixed with `public/favicon.svg`), and two walkthrough checks were wrong in the script rather than in the app (a visibility call that does not wait, and a fallback check that matched text already on screen, which was rerun on a fresh session and passed).
 
+### Phase 6B — Intent routing & assistant behaviour
+
+Added after Phase 6 because "hi" returned the medical fallback: every message went through
+retrieval. Lands before Phase 7 so the evaluation measures the pipeline that ships.
+
+- ✅ **6B.1** `behaviour.py` (`BehaviourStore`, `data/behaviour.json`, caps) and `storage.py` (atomic write, shared with transcripts); `LOCKED_RULES` in `config.py`.
+- ✅ **6B.2** `agents/classifier.py` + `prompts/classify.md`: greeting regex fast path, structured-output classifier, retry once then `medical`.
+- ✅ **6B.3** `agents/smalltalk.py` + `prompts/smalltalk.md`; `agents/admin_text.py` appends the admin text to the Generator and small talk, never the Verifier.
+- ✅ **6B.4** Graph: `classify_intent` → `smalltalk_reply` / `decline` / the unchanged medical loop; emergencies forced to `medical`; `intent` in results, logs and transcripts.
+- ✅ **6B.5** `GET/PUT /internal/behaviour`; backend `GET/PUT /api/admin/behaviour` (admin only, caps mirrored, friendly 503); `status` widened in all three services.
+- ✅ **6B.6** Frontend: `/admin/behaviour` page with tabs, counters, Save / Discard / Restore defaults, locked rules; small-talk and refusal bubbles.
+- ✅ **6B.7** Tests: AI 387 (+8 live behind `-m ollama`), backend 160, frontend 35 (6 files); ruff, ESLint, `tsc`, Prettier, `vite build` clean.
+- ✅ **6B.8** Live gate in a real browser.
+
+**Gate: PASSED 2026-11-21.** Playwright drove headless Chrome against a throwaway stack (ports 18000/18001/15173, scratch `DATA_DIR`, real `qwen3:8b` + `bge-m3`); the real `data/` was not touched. 15/15 checks, no browser console errors, and the AI service's own log agreed on every route:
+
+| Message | Route | Result |
+|---|---|---|
+| "hi", "how are you?" | greeting fast path | friendly reply, no Sources, no fallback; 0.6–1.0 s |
+| "Nice to meet you, you seem really helpful" | classifier → `smalltalk` | friendly reply; 0.8 s |
+| "Write me a pasta recipe", "fix a bug in my Python code" | classifier → `out_of_scope` | exact refusal text; 0.3 s |
+| "What are the typical symptoms of a migraine?" | `medical` | verified, `[1] testdoc.md · p. 1`; 15 s |
+| "hi, I have chest pain" | emergency → `medical`, classifier skipped | red banner + fallback (the fixture has nothing on chest pain); 15 s |
+| "hello, what are the symptoms of dehydration?" (fresh session) | classifier → `medical` | verified and cited; 17 s |
+| Admin edits refusal text and tone, then saves | — | next off-topic message used the new text at once (no restart); small talk followed the new tone ("Stay healthy!"); Restore defaults + Save brought the original text back |
+| A user opens `/admin/behaviour` | — | redirected to `/chat` |
+
+Live classifier tests (`-m ollama`): 8/8 on real `qwen3:8b`, including "what about for kids?" after a migraine exchange staying `medical`. Plan and results: `.claude/plans/phase_6b_intent_routing.md`.
+
 ### Phase 7 — Evaluation (M8)
 
 - **7.1** `eval/testset.jsonl` — 30–50 hand-written question / reference / source rows taken from the uploaded documents (team work, not model-generated).
 - **7.2** `eval/run_ragas.py` — calls the LangGraph pipeline directly, pinned `ragas`, Ollama judge + embeddings, writes `data/eval/results-<ts>.csv`, prints Faithfulness / Response Relevancy / Context Precision **plus** verified rate, fallback rate, average iterations, average latency.
 - **7.3** Ablation: iteration-1-without-verifier vs the full dual-agent loop — this is the headline result for the report.
+- Since 6B every message is classified first: report how many test-set questions the classifier routed away from `medical` (it should be none), and score only the RAG answers.
 - ⚠️ Qdrant local mode allows one process, so **the AI service must be stopped before running the eval**. `run_ragas.py` should fail fast with that exact explanation if it cannot acquire the storage lock.
 
 ### Phase 8 — Hardening (M9)

@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Status** | ✅ **Complete 2026-11-21 — gate passed, on `feature/6b-intent-routing`, not yet merged** |
 | **Branch** | `feature/6b-intent-routing` from `main` (`ecaf2ba`) |
 | **Touches** | `ai/`, `backend/`, `frontend/`, `CLAUDE.md`. **No new dependencies.** |
 | **Record** | Copy this plan to `.claude/plans/phase_6b_intent_routing.md` at 6B.0, and fill in the results at the end |
@@ -190,3 +191,20 @@ Run a real-browser walkthrough with Playwright against a throwaway stack on port
 1. `ai/` and `backend/`: `uv run ruff check . ; uv run ruff format --check . ; uv run pytest`. Then run `uv run pytest -m ollama -k classif` with Ollama up.
 2. `frontend/`: `npm run lint ; npm run typecheck ; npm run test ; npm run format:check`.
 3. Run the 6B.8 browser walkthrough against a throwaway stack. Your real `data/` is never written. Record the results and latencies in the plan record and in §17.
+
+---
+
+## Results
+
+**Commits:** `a55b25a` plan, `f164bbf` AI service, `9ada0ec` backend, `56b629d` frontend.
+
+**Checks:** AI 387 tests (+8 live classifier tests on real `qwen3:8b`, all passing), backend 160, frontend 35. ruff, ruff format, ESLint, `tsc`, Prettier and `vite build` are clean. Five existing pipeline tests counted every LLM call. They now count the medical loop's own calls (`rag_chat_calls`, `rag_events`), and the full `events` list still shows `chat:classify` first.
+
+**Bug caught by a test:** the behaviour form remounts after a save (its key is `updated_at`), which threw away its own mutation state, so "Saved" never appeared. The save mutation now lives in the page, and the test passes.
+
+**Live gate (6B.8):** 15/15 in headless Chrome against a throwaway stack. The table is in CLAUDE.md §17 Phase 6B. Small talk takes 0.6–1.0 s and refusals 0.3 s, because neither loads `bge-m3`; medical answers take 15–17 s, as before.
+
+## Deviations from the plan
+- `ai_service/contracts.py` was added for the shared `Intent` and `ChatStatus` literals, so the state, transcripts and router use one definition.
+- The admin behaviour routes live in their own `backend/app/routers/admin_behaviour.py`.
+- In the frontend, the "unsaved changes" warning uses `beforeunload` only; in-app navigation does not prompt.
