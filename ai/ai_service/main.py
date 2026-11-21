@@ -15,11 +15,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from qdrant_client import QdrantClient
 
+from ai_service.agents.condenser import Condenser
 from ai_service.agents.generator import Generator
+from ai_service.agents.safety import SafetyChecker
 from ai_service.agents.verifier import Verifier
 from ai_service.config import DEFAULT_INTERNAL_KEY, Settings, get_settings
 from ai_service.graph.pipeline import build_pipeline
 from ai_service.llm.ollama_client import OllamaClient
+from ai_service.memory.chat_store import ChatStore
 from ai_service.retrieval.docstore import Docstore
 from ai_service.retrieval.retriever import Retriever
 from ai_service.retrieval.vector_store import VectorStore
@@ -91,12 +94,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     llm = OllamaClient(settings)
     app.state.llm = llm
     try:
-        # Both load their prompt file now and fail loudly if it is absent.
+        # Each loads its prompt / terms file now and fails loudly if it is absent or invalid.
         generator = Generator(llm, settings)
         verifier = Verifier(llm, settings)
+        condenser = Condenser(llm, settings)
+        safety = SafetyChecker.load()
         app.state.pipeline = build_pipeline(
-            Retriever(store, docstore, llm, settings), generator, verifier, settings
+            Retriever(store, docstore, llm, settings),
+            generator,
+            verifier,
+            condenser,
+            safety,
+            settings,
         )
+        app.state.chat_store = ChatStore(settings.chats_dir)
     except Exception:
         await asyncio.to_thread(client.close)
         raise
@@ -108,6 +119,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.qdrant = None
         app.state.vector_store = None
         app.state.pipeline = None
+        app.state.chat_store = None
         logger.info("qdrant local storage closed")
 
 

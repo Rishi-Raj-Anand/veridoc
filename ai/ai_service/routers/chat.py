@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field, field_validator
 
-from ai_service.config import DISCLAIMER
-from ai_service.deps import PipelineDep
+from ai_service.config import DISCLAIMER, Settings, get_settings
+from ai_service.deps import ChatStoreDep, PipelineDep
 from ai_service.graph.pipeline import run_turn
 from ai_service.llm.ollama_client import OllamaError
+from ai_service.memory.chat_store import SessionOwnershipError
 from ai_service.security import require_internal_key
 
 logger = logging.getLogger(__name__)
@@ -63,17 +64,29 @@ def _lock(request: Request) -> asyncio.Lock:
 
 
 @router.post("/chat", response_model=ChatResponse, summary="Answer one chat message")
-async def chat(body: ChatRequest, request: Request, pipeline: PipelineDep) -> ChatResponse:
+async def chat(
+    body: ChatRequest,
+    request: Request,
+    pipeline: PipelineDep,
+    store: ChatStoreDep,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> ChatResponse:
     try:
         # One model in VRAM: parallel turns would only make Ollama swap models (§6.8).
         async with _lock(request):
             result = await asyncio.to_thread(
                 run_turn,
                 pipeline,
+                store=store,
+                history_max_messages=settings.history_max_messages,
                 session_id=str(body.session_id),
                 user_id=body.user_id,
                 message=body.message,
             )
+    except SessionOwnershipError as exc:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, detail="session belongs to another user"
+        ) from exc
     except OllamaError as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     except Exception as exc:

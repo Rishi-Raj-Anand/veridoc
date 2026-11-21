@@ -34,3 +34,11 @@ def test_verifier_prompt_names_every_schema_field() -> None:
 def test_missing_prompt_raises() -> None:
     with pytest.raises(FileNotFoundError):
         load_prompt("does-not-exist")
+
+
+def test_condense_prompt_forbids_answering_and_demands_one_question() -> None:
+    prompt = load_prompt("condense").lower()
+
+    assert "standalone" in prompt
+    assert "do not answer" in prompt or "never answer" in prompt
+    assert "unchanged" in prompt

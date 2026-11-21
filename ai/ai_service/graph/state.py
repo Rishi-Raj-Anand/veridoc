@@ -33,7 +33,10 @@ class PipelineState(TypedDict, total=False):
     session_id: str
     user_id: int
     message: str
+    history: list[dict[str, str]]  # earlier turns, newest last; only the condenser reads it
     # working
+    condensed: bool  # True when the standalone question differs from the message
+    emergency_matches: list[str]  # red-flag categories that matched (§6.2 safety_check)
     query: str  # the standalone question; Generator and Verifier always see this
     retrieval_query: str  # query plus the latest missing_info; what gets embedded
     query_vector: list[float]
