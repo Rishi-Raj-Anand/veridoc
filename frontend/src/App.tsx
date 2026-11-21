@@ -1,35 +1,62 @@
 /**
- * Application shell and routes (CLAUDE.md §10).
+ * Routes (CLAUDE.md §10).
  *
- * Route guards by role and the real pages arrive in Phase 6; Phase 0 only proves
- * the shell renders and the service chain is reachable.
+ * The landing page and the 404 page are standalone layouts. Login, register, chat and admin
+ * share <AppLayout>. Guards: signed out -> /login, a user on /admin -> /chat.
  */
 
 import { Navigate, Route, Routes } from "react-router";
 
-import { HealthBanner } from "./components/HealthBanner";
+import { AppLayout } from "./components/AppLayout";
+import { RedirectIfAuthed } from "./components/RedirectIfAuthed";
+import { RequireAuth } from "./components/RequireAuth";
 import { AdminPage } from "./pages/AdminPage";
 import { ChatPage } from "./pages/ChatPage";
+import { HomePage } from "./pages/HomePage";
 import { LoginPage } from "./pages/LoginPage";
+import { NotFoundPage } from "./pages/NotFoundPage";
 import { RegisterPage } from "./pages/RegisterPage";
 
 export default function App() {
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      <header className="border-b border-slate-200 bg-white px-6 py-4">
-        <h1 className="text-2xl font-bold">VeriDoc AI</h1>
-        <HealthBanner />
-      </header>
-      <main className="mx-auto max-w-3xl px-6 py-8">
-        <Routes>
-          <Route path="/" element={<Navigate to="/chat" replace />} />
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/register" element={<RegisterPage />} />
-          <Route path="/chat" element={<ChatPage />} />
-          <Route path="/admin" element={<AdminPage />} />
-          <Route path="*" element={<p className="text-slate-600">Page not found.</p>} />
-        </Routes>
-      </main>
-    </div>
+    <Routes>
+      <Route path="/" element={<Navigate to="/home" replace />} />
+      <Route path="/home" element={<HomePage />} />
+      <Route element={<AppLayout />}>
+        <Route
+          path="/login"
+          element={
+            <RedirectIfAuthed>
+              <LoginPage />
+            </RedirectIfAuthed>
+          }
+        />
+        <Route
+          path="/register"
+          element={
+            <RedirectIfAuthed>
+              <RegisterPage />
+            </RedirectIfAuthed>
+          }
+        />
+        <Route
+          path="/chat"
+          element={
+            <RequireAuth>
+              <ChatPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/admin"
+          element={
+            <RequireAuth role="admin">
+              <AdminPage />
+            </RequireAuth>
+          }
+        />
+      </Route>
+      <Route path="*" element={<NotFoundPage />} />
+    </Routes>
   );
 }

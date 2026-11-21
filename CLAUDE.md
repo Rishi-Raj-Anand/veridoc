@@ -142,7 +142,7 @@ veridoc/
 │   └── src/
 │       ├── api/               # ALL fetch calls + response types live here
 │       ├── components/
-│       ├── pages/             # LoginPage, RegisterPage, ChatPage, AdminPage
+│       ├── pages/             # HomePage, LoginPage, RegisterPage, ChatPage, AdminPage, NotFoundPage
 │       ├── hooks/
 │       ├── context/           # AuthContext
 │       └── main.tsx
@@ -381,10 +381,20 @@ Errors use FastAPI's standard `{"detail": "..."}` with proper status codes. The 
 
 ## 10. Frontend
 
-- Pages: `/login`, `/register`, `/chat` (user), `/admin` (admin only — upload, list with status, delete). Route guards by role.
+- Pages:
+  - `/home`: public landing page with a "VERIDOC AI" hero, a how-it-works section and a **"Try out AI Doctor"** link to `/chat`. `/` redirects here.
+  - `/login` and `/register`.
+  - `/chat`: any signed-in user, the admin included.
+  - `/admin`: admin only. It has a system status card, upload, the document list with status, and delete.
+  - A custom, light-hearted **404 page** for every unknown path.
+- Route guards by role: a signed-out visitor goes to `/login` and comes back afterwards, and a user who opens `/admin` goes to `/chat`.
+- The landing and 404 pages are standalone full-bleed layouts. The other pages share one app header with the logo, Chat, Admin (admin only), the user's email and Log out.
 - JWT stored in `localStorage` for v1 (known trade-off; revisit before any public deployment).
 - All HTTP calls live in `src/api/`; components never call `fetch` directly. Types for every request/response.
 - Chat UI: message list, input box, "Thinking…" indicator while waiting, citation list under each answer, red emergency banner when `emergency=true`, persistent disclaimer banner.
+- The emergency banner shows the answer's first paragraph, which is the notice the AI service prefixes, so the notice text is never duplicated in the frontend.
+- The persistent disclaimer banner must render before the first reply, so its text is one constant in `src/constants.ts` that mirrors `ai_service/config.py`. Each answer still shows the API's `disclaimer`.
+- No external fonts, CDNs or analytics: use the system font stack and inline SVG only.
 - Render answers as Markdown with a sanitizing renderer (`react-markdown`, no raw HTML).
 - No history sidebar. Refreshing the page starts a new session.
 
@@ -709,12 +719,48 @@ reusing a session got 403, and a stopped AI service gave the friendly 503. `olla
 
 ### Phase 6 — Frontend (M7)
 
-- **6.1** `src/api/` — typed `auth.ts`, `chat.ts`, `admin.ts`; bearer-token injection; 401 → logout.
-- **6.2** `AuthContext` (token + role in `localStorage`) + role-based route guards.
-- **6.3** `LoginPage`, `RegisterPage`.
-- **6.4** `ChatPage` — `session_id = crypto.randomUUID()` in React state only, message list, "Thinking…" indicator, `react-markdown` (no raw HTML), citation list under each answer, red emergency banner when `emergency=true`, persistent disclaimer banner.
-- **6.5** `AdminPage` — upload, document table with status (poll via TanStack Query while any row is `pending`), delete with confirmation, `error` text shown for `failed` rows.
-- **6.6** `npm run lint ; npm run typecheck ; npm run test` green.
+- ✅ **6.1** `src/api/` — typed `auth.ts`, `chat.ts`, `admin.ts`; bearer-token injection; 401 → logout.
+- ✅ **6.2** `AuthContext` (token + role in `localStorage`) + role-based route guards.
+- ✅ **6.3** `LoginPage`, `RegisterPage`.
+- ✅ **6.4** `ChatPage` — `session_id = crypto.randomUUID()` in React state only, message list, "Thinking…" indicator, `react-markdown` (no raw HTML), citation list under each answer, red emergency banner when `emergency=true`, persistent disclaimer banner.
+- ✅ **6.5** `AdminPage` — upload, document table with status (poll via TanStack Query while any row is `pending`), delete with confirmation, `error` text shown for `failed` rows.
+- ✅ **6.6** `npm run lint ; npm run typecheck ; npm run test` green.
+- ✅ **6.7** `HomePage` at `/home`, the public landing page; `/` redirects here.
+  - A "VERIDOC AI" hero with a **"Try out AI Doctor"** link to `/chat` (signed-out visitors log in first).
+  - How-it-works steps, feature cards, the disclaimer and the project credits.
+- ✅ **6.8** `NotFoundPage` for `*`: a funny medical "case file".
+  - A flatlining EKG, "Diagnosis: Acute Page-Not-Found-itis" and a mock failed Verifier audit.
+  - Links home and to Doctor AI.
+  - The jokes never touch real emergencies.
+- ✅ **6.9** Live gate in a browser against all three services; results below.
+
+**Gate: PASSED 2026-11-21.** Checked in a real browser (headless Chrome driven by Playwright) against a throwaway stack with the real `qwen3:8b` and `bge-m3`:
+- The landing CTA leads to login, then `/chat`.
+- Registering logs the new user in automatically.
+- An in-corpus question returns a cited `verified` answer with the disclaimer.
+- A red-flag message shows the red banner.
+- An off-corpus question shows the fallback.
+- The admin uploads a document (`pending` → `ready`) and deletes it.
+- A user cannot reach `/admin`.
+- Refreshing starts a new session.
+- An unknown URL shows the 404 page.
+
+Plan and results: `.claude/plans/phase_6_frontend.md`.
+
+**Status 2026-11-21:** 6.1–6.9 done. Frontend: 28 tests (5 files), ESLint, `tsc`, Prettier and `vite build` clean; backend and AI service untouched.
+
+Browser walkthrough: Playwright (installed outside the repo, not a project dependency) drove headless Chrome against a throwaway `DATA_DIR` on ports 18000/18001/15173, so the real `data/` was never written. Results with a 3-row fixture document:
+
+| Step | Result |
+|---|---|
+| Landing, register, guards | `/` → `/home`; the CTA goes to `/login` when signed out; register auto-logs in and lands on `/chat`; a user on `/admin` goes to `/chat` with no Admin link; logout then `/chat` goes to `/login`; refresh gives an empty conversation and stays signed in |
+| Admin | upload `pending` → `ready` (the pending badge was seen), status card shows all services up, confirmed delete empties the list |
+| In-corpus question | verified answer with the grounded symptoms, `[1] testdoc.md · p. 1`, the API disclaimer, no scores shown; 10 s |
+| Red-flag message | red banner with the notice shown exactly once, above the fallback text (the fixture has nothing on chest pain); 19 s |
+| Off-corpus question | exact fallback text, no citations, no emergency notice; 9 s |
+| 404 and phone width | case-file page renders; home, 404 and login have no horizontal overflow at 390 px |
+
+Two things the run turned up: a missing favicon made every page load log a 404 (fixed with `public/favicon.svg`), and two walkthrough checks were wrong in the script rather than in the app (a visibility call that does not wait, and a fallback check that matched text already on screen, which was rerun on a fresh session and passed).
 
 ### Phase 7 — Evaluation (M8)
 
