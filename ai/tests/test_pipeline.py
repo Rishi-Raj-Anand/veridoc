@@ -7,10 +7,13 @@ from pathlib import Path
 import pytest
 from qdrant_client import QdrantClient
 
+from ai_service.agents.classifier import IntentClassifier
 from ai_service.agents.condenser import Condenser
 from ai_service.agents.generator import Generator
 from ai_service.agents.safety import SafetyChecker
+from ai_service.agents.smalltalk import SmallTalk
 from ai_service.agents.verifier import Verifier
+from ai_service.behaviour import BehaviourStore
 from ai_service.config import EMERGENCY_NOTICE, FALLBACK_MESSAGE, Settings
 from ai_service.graph.pipeline import PipelineResult, build_pipeline, run_turn
 from ai_service.ingestion.chunker import ChildChunk, ParentChunk
@@ -64,13 +67,17 @@ class Env:
                 ParentChunk("1:p00001", 1, 2, 2, "Cold: rest and fluids."),
             ],
         )
+        self.behaviour = BehaviourStore(tmp_path / "behaviour.json")
         self.pipeline = build_pipeline(
             Retriever(self.store, self.docstore, llm, self.settings),
-            Generator(llm, self.settings),
+            Generator(llm, self.settings, self.behaviour),
             Verifier(llm, self.settings),
             Condenser(llm, self.settings),
             SafetyChecker.load(),
             self.settings,
+            classifier=IntentClassifier(llm, self.settings),
+            smalltalk=SmallTalk(llm, self.settings, self.behaviour),
+            behaviour=self.behaviour,
         )
         self.chats = ChatStore(tmp_path / "chats")
 
@@ -229,7 +236,7 @@ def test_max_iterations_one_gives_a_single_attempt(tmp_path: Path) -> None:
     result = Env(tmp_path, llm, max_iterations=1).run()
 
     assert (result.status, result.iterations) == ("fallback", 1)
-    assert len(llm.chat_calls) == 2
+    assert len(llm.rag_chat_calls) == 2
 
 
 # --- drafts that are never audited -----------------------------------------------------
@@ -287,7 +294,7 @@ def test_a_score_still_low_at_the_last_iteration_falls_back_without_another_llm_
 
     assert (result.status, result.iterations) == ("fallback", 3)
     assert outcomes(result) == ["low_score", "fail", "low_score"]
-    assert len(llm.chat_calls) == 2  # one generation and one audit, at iteration 2 only
+    assert len(llm.rag_chat_calls) == 2  # one generation and one audit, at iteration 2 only
 
 
 def test_an_empty_knowledge_base_falls_back_without_calling_the_llm(tmp_path: Path) -> None:
@@ -298,7 +305,7 @@ def test_an_empty_knowledge_base_falls_back_without_calling_the_llm(tmp_path: Pa
     result = env.run()
 
     assert (result.status, result.answer) == ("fallback", FALLBACK_MESSAGE)
-    assert llm.chat_calls == []
+    assert llm.rag_chat_calls == []  # only the intent classifier ran; nothing was generated
 
 
 def test_the_iteration_count_never_exceeds_the_cap(tmp_path: Path) -> None:
@@ -335,7 +342,8 @@ def test_the_first_turn_makes_no_condenser_call(tmp_path: Path) -> None:
 
     assert env.llm.condense_calls == []
     assert result.standalone_query == QUESTION
-    assert env.llm.events == ["embed", "chat:gen", "chat:verify"]
+    # The classifier runs first, before any embedding (§6.8: the LLM is still resident).
+    assert env.llm.events == ["chat:classify", "embed", "chat:gen", "chat:verify"]
 
 
 def test_a_follow_up_is_condensed_and_retrieval_uses_the_standalone_question(
@@ -345,7 +353,13 @@ def test_a_follow_up_is_condensed_and_retrieval_uses_the_standalone_question(
 
     assert result.standalone_query == STANDALONE
     assert env.llm.calls[-1] == [STANDALONE]  # the second embed call
-    assert env.llm.events[3:] == ["chat:condense", "embed", "chat:gen", "chat:verify"]
+    assert env.llm.events[4:] == [
+        "chat:classify",
+        "chat:condense",
+        "embed",
+        "chat:gen",
+        "chat:verify",
+    ]
 
 
 def test_generator_and_verifier_see_the_standalone_question_and_no_history(

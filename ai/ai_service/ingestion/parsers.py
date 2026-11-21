@@ -2,7 +2,8 @@
 
 Turns an uploaded file into ``PageText`` units. PDFs keep their real page numbers; for
 DOCX, TXT and MD the "page" is a heading-based section index (section 1 until the first
-heading, then one per heading), or simply 1 when the file has no headings.
+heading, then one per heading), or simply 1 when the file has no headings. A CSV is converted
+to Markdown first (one section per entry, ``csv_to_md``), so its "page" N is the N-th entry.
 """
 
 from __future__ import annotations
@@ -14,7 +15,9 @@ from pathlib import Path
 import pymupdf
 from docx import Document as load_docx
 
-SUPPORTED_SUFFIXES = frozenset({".pdf", ".txt", ".md", ".docx"})
+from ai_service.ingestion.csv_to_md import CsvConversionError, convert
+
+SUPPORTED_SUFFIXES = frozenset({".pdf", ".txt", ".md", ".docx", ".csv"})
 
 # A PDF averaging fewer non-whitespace characters per page than this is treated as
 # scanned / image-only. We do not OCR (§1).
@@ -113,13 +116,26 @@ def parse_txt(path: Path) -> list[PageText]:
     return _pages_from_sections([_read_text(path).splitlines()])
 
 
-def parse_markdown(path: Path) -> list[PageText]:
+def _markdown_pages(text: str) -> list[PageText]:
     sections: list[list[str]] = [[]]
-    for line in _read_text(path).splitlines():
+    for line in text.splitlines():
         if _MD_HEADING.match(line) and sections[-1]:
             sections.append([])
         sections[-1].append(line)
     return _pages_from_sections(sections)
+
+
+def parse_markdown(path: Path) -> list[PageText]:
+    return _markdown_pages(_read_text(path))
+
+
+def parse_csv(path: Path) -> list[PageText]:
+    """One section per entry. Underscores become spaces: "high_fever" embeds as "high fever"."""
+    try:
+        markdown = convert(_read_text(path), underscores_to_spaces=True)
+    except CsvConversionError as exc:
+        raise ParseError(f"CSV could not be converted: {exc}") from exc
+    return _markdown_pages(markdown)
 
 
 _PARSERS = {
@@ -127,6 +143,7 @@ _PARSERS = {
     ".docx": parse_docx,
     ".txt": parse_txt,
     ".md": parse_markdown,
+    ".csv": parse_csv,
 }
 
 

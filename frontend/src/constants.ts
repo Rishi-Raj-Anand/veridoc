@@ -9,7 +9,15 @@
 export const DISCLAIMER =
   "VeriDoc AI provides information from reference documents and is not a substitute for professional medical advice, diagnosis, or treatment.";
 
-export const ACCEPTED_EXTENSIONS = [".pdf", ".txt", ".md", ".docx"] as const;
+export const ACCEPTED_EXTENSIONS = [".pdf", ".txt", ".md", ".docx", ".csv"] as const;
 
 export const MAX_MESSAGE_CHARS = 2000;
 export const MIN_PASSWORD_CHARS = 8;
+
+/** Mirrors the caps in `ai/ai_service/behaviour.py` and `backend/app/schemas/behaviour.py`. */
+export const BEHAVIOUR_LIMITS = {
+  persona: 600,
+  scope: 600,
+  out_of_scope_message: 400,
+  extra_guardrails: 1500,
+} as const;

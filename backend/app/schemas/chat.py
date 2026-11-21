@@ -32,6 +32,8 @@ class Citation(BaseModel):
 class ChatResponse(BaseModel):
     answer: str
     citations: list[Citation]
-    status: Literal["verified", "fallback"]
+    # verified/fallback come from the medical RAG loop; smalltalk/out_of_scope from the
+    # intent router (§6.9). Users never see the word.
+    status: Literal["verified", "fallback", "smalltalk", "out_of_scope"]
     emergency: bool
     disclaimer: str

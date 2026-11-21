@@ -15,10 +15,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from qdrant_client import QdrantClient
 
+from ai_service.agents.classifier import IntentClassifier
 from ai_service.agents.condenser import Condenser
 from ai_service.agents.generator import Generator
 from ai_service.agents.safety import SafetyChecker
+from ai_service.agents.smalltalk import SmallTalk
 from ai_service.agents.verifier import Verifier
+from ai_service.behaviour import BehaviourStore
 from ai_service.config import DEFAULT_INTERNAL_KEY, Settings, get_settings
 from ai_service.graph.pipeline import build_pipeline
 from ai_service.llm.ollama_client import OllamaClient
@@ -26,7 +29,7 @@ from ai_service.memory.chat_store import ChatStore
 from ai_service.retrieval.docstore import Docstore
 from ai_service.retrieval.retriever import Retriever
 from ai_service.retrieval.vector_store import VectorStore
-from ai_service.routers import chat, health, ingest
+from ai_service.routers import behaviour, chat, health, ingest
 
 logger = logging.getLogger(__name__)
 
@@ -94,8 +97,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     llm = OllamaClient(settings)
     app.state.llm = llm
     try:
+        behaviour_store = BehaviourStore(settings.behaviour_path)
+        app.state.behaviour_store = behaviour_store
         # Each loads its prompt / terms file now and fails loudly if it is absent or invalid.
-        generator = Generator(llm, settings)
+        generator = Generator(llm, settings, behaviour_store)
         verifier = Verifier(llm, settings)
         condenser = Condenser(llm, settings)
         safety = SafetyChecker.load()
@@ -106,6 +111,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             condenser,
             safety,
             settings,
+            classifier=IntentClassifier(llm, settings),
+            smalltalk=SmallTalk(llm, settings, behaviour_store),
+            behaviour=behaviour_store,
         )
         app.state.chat_store = ChatStore(settings.chats_dir)
     except Exception:
@@ -134,6 +142,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(ingest.router)
     app.include_router(chat.router)
+    app.include_router(behaviour.router)
     app.state.ingest_lock = asyncio.Lock()
     app.state.chat_lock = asyncio.Lock()
     return app

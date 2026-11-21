@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
+
+from app.schemas.types import UtcDatetime
 
 DocumentStatus = Literal["pending", "ready", "failed"]
 
@@ -21,7 +22,7 @@ class DocumentResponse(BaseModel):
     status: DocumentStatus
     chunk_count: int
     error: str | None
-    created_at: datetime
+    created_at: UtcDatetime
 
 
 class IngestResult(BaseModel):

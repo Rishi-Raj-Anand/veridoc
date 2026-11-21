@@ -13,6 +13,7 @@ import httpx
 from pydantic import ValidationError
 
 from app.config import Settings
+from app.schemas.behaviour import BehaviourResponse, BehaviourSettings
 from app.schemas.chat import ChatResponse
 from app.schemas.document import IngestResult
 from app.schemas.health import AiServiceHealth
@@ -20,11 +21,10 @@ from app.schemas.health import AiServiceHealth
 logger = logging.getLogger(__name__)
 
 HEALTH_TIMEOUT_SECONDS = 5.0
-# Ingestion parses, embeds and indexes a whole document (§6.8): minutes, not seconds.
-INGEST_TIMEOUT_SECONDS = 600.0
 DELETE_TIMEOUT_SECONDS = 30.0
 # A turn can load models and run up to three retrieval rounds (§6.8: 30-90 s); stay well above.
 CHAT_TIMEOUT_SECONDS = 300.0
+BEHAVIOUR_TIMEOUT_SECONDS = 10.0
 
 
 class AiServiceError(RuntimeError):
@@ -78,6 +78,7 @@ async def _call(
     *,
     timeout_seconds: float,
     json: object | None = None,
+    timeout_detail: str | None = None,
 ) -> httpx.Response:
     """Send one internal request. Failures become ``AiServiceError`` with a friendly message.
 
@@ -90,6 +91,12 @@ async def _call(
             response = await client.request(
                 method, url, headers=internal_headers(settings), json=json
             )
+    except (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as exc:
+        # The service is reachable but did not answer in time: saying "is it running?" here
+        # would send the admin looking for the wrong problem.
+        raise AiServiceError(
+            timeout_detail or f"AI service did not answer within {timeout_seconds:.0f} seconds"
+        ) from exc
     except httpx.HTTPError as exc:
         raise AiServiceError(
             f"AI service unavailable at {settings.ai_service_url} ({type(exc).__name__}) - "
@@ -107,16 +114,27 @@ async def _call(
     return response
 
 
+def ingest_timeout_message(minutes: int) -> str:
+    return (
+        f"Indexing did not finish within {minutes} minutes, so VeriDoc stopped waiting. "
+        "The file is probably too large: delete this entry (that also clears anything indexed "
+        "in the background), then upload it in smaller parts, or raise INGEST_TIMEOUT_MINUTES "
+        "in backend/.env."
+    )
+
+
 async def ingest_document(
     settings: Settings, doc_id: int, file_path: str, filename: str
 ) -> IngestResult:
     """Ask the AI service to parse, chunk, embed and index one uploaded file (§6.1)."""
+    minutes = settings.ingest_timeout_minutes
     response = await _call(
         settings,
         "POST",
         "/internal/ingest",
-        timeout_seconds=INGEST_TIMEOUT_SECONDS,
+        timeout_seconds=minutes * 60.0,
         json={"doc_id": doc_id, "file_path": file_path, "filename": filename},
+        timeout_detail=ingest_timeout_message(minutes),
     )
     try:
         return IngestResult.model_validate(response.json())
@@ -146,3 +164,30 @@ async def send_chat(
         return ChatResponse.model_validate(response.json())
     except (ValidationError, ValueError) as exc:
         raise AiServiceError("AI service sent an unexpected chat response") from exc
+
+
+async def get_behaviour(settings: Settings) -> BehaviourResponse:
+    """The assistant's current behaviour, its defaults and the locked §7 rules (§6.9)."""
+    response = await _call(
+        settings, "GET", "/internal/behaviour", timeout_seconds=BEHAVIOUR_TIMEOUT_SECONDS
+    )
+    return _parse_behaviour(response)
+
+
+async def update_behaviour(settings: Settings, body: BehaviourSettings) -> BehaviourResponse:
+    """Replace the assistant's behaviour; it applies from the next chat message (§6.9)."""
+    response = await _call(
+        settings,
+        "PUT",
+        "/internal/behaviour",
+        timeout_seconds=BEHAVIOUR_TIMEOUT_SECONDS,
+        json=body.model_dump(),
+    )
+    return _parse_behaviour(response)
+
+
+def _parse_behaviour(response: httpx.Response) -> BehaviourResponse:
+    try:
+        return BehaviourResponse.model_validate(response.json())
+    except (ValidationError, ValueError) as exc:
+        raise AiServiceError("AI service sent an unexpected behaviour response") from exc

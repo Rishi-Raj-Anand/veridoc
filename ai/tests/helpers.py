@@ -10,10 +10,13 @@ import pytest
 from fastapi import FastAPI
 from qdrant_client import QdrantClient
 
+from ai_service.agents.classifier import IntentClassifier
 from ai_service.agents.condenser import Condenser
 from ai_service.agents.generator import Generator
 from ai_service.agents.safety import SafetyChecker
+from ai_service.agents.smalltalk import SmallTalk
 from ai_service.agents.verifier import Verifier
+from ai_service.behaviour import BehaviourStore
 from ai_service.config import get_settings
 from ai_service.graph.pipeline import build_pipeline
 from ai_service.llm import ollama_client
@@ -71,6 +74,11 @@ class FakeEmbedder:
         return [[float(len(text) % 7 + 1)] + [0.0] * 1023 for text in texts]
 
 
+def intent_json(intent: str) -> str:
+    """A classifier reply (§6.9)."""
+    return json.dumps({"intent": intent})
+
+
 def verifier_json(
     faithfulness: float = 1.0,
     relevance: float = 1.0,
@@ -93,9 +101,11 @@ def verifier_json(
 class FakeLlm(FakeEmbedder):
     """Scripted ``OllamaClient``.
 
-    ``embed`` returns ``query_vector``. ``chat`` is a Generator call unless ``format`` is set
-    (the Verifier). Each side replays its script in order and repeats the last entry once it
-    runs out. ``events`` records the call order (``embed`` / ``chat:gen`` / ``chat:verify``).
+    ``embed`` returns ``query_vector``. ``chat`` calls are told apart by their system prompt
+    and ``format``: classifier, small talk, condenser, Verifier, otherwise the Generator. Each
+    kind replays its script in order and repeats the last entry once it runs out. ``events``
+    records the call order (``embed`` / ``chat:classify`` / ``chat:gen`` / ``chat:verify`` ...).
+    The classifier answers "medical" unless scripted otherwise.
     """
 
     def __init__(
@@ -106,6 +116,8 @@ class FakeLlm(FakeEmbedder):
         replies: list[str] | None = None,
         verifier_replies: list[str] | None = None,
         condense_replies: list[str] | None = None,
+        classify_replies: list[str] | None = None,
+        smalltalk_replies: list[str] | None = None,
         embed_fails: bool = False,
         chat_fails: bool = False,
     ) -> None:
@@ -117,24 +129,60 @@ class FakeLlm(FakeEmbedder):
         )
         self._condense_replies = condense_replies if condense_replies is not None else [""]
         self._condense_prompt = load_prompt("condense")
+        self._classify_replies = (
+            classify_replies if classify_replies is not None else [intent_json("medical")]
+        )
+        self._classify_prompt = load_prompt("classify")
+        self._smalltalk_replies = (
+            smalltalk_replies if smalltalk_replies is not None else ["Hello! I'm Doctor AI."]
+        )
+        self._smalltalk_prompt = load_prompt("smalltalk")
         self.chat_fails = chat_fails
         self.chat_calls: list[dict[str, Any]] = []
         self.events: list[str] = []
 
-    def _is_condense(self, call: dict[str, Any]) -> bool:
-        return call["format"] is None and call["messages"][0]["content"] == self._condense_prompt
+    def _kind(self, call: dict[str, Any]) -> str:
+        system = call["messages"][0]["content"]
+        if call["format"] is not None:
+            return "classify" if system == self._classify_prompt else "verify"
+        if system == self._condense_prompt:
+            return "condense"
+        if system.startswith(self._smalltalk_prompt):
+            return "smalltalk"
+        return "gen"
+
+    def _calls(self, kind: str) -> list[dict[str, Any]]:
+        return [c for c in self.chat_calls if self._kind(c) == kind]
 
     @property
     def condense_calls(self) -> list[dict[str, Any]]:
-        return [c for c in self.chat_calls if self._is_condense(c)]
+        return self._calls("condense")
 
     @property
     def generator_calls(self) -> list[dict[str, Any]]:
-        return [c for c in self.chat_calls if c["format"] is None and not self._is_condense(c)]
+        return self._calls("gen")
 
     @property
     def verifier_calls(self) -> list[dict[str, Any]]:
-        return [c for c in self.chat_calls if c["format"] is not None]
+        return self._calls("verify")
+
+    @property
+    def classify_calls(self) -> list[dict[str, Any]]:
+        return self._calls("classify")
+
+    @property
+    def smalltalk_calls(self) -> list[dict[str, Any]]:
+        return self._calls("smalltalk")
+
+    @property
+    def rag_chat_calls(self) -> list[dict[str, Any]]:
+        """``chat_calls`` without the intent classifier: the medical loop's own LLM calls."""
+        return [c for c in self.chat_calls if self._kind(c) != "classify"]
+
+    @property
+    def rag_events(self) -> list[str]:
+        """``events`` without the intent classifier: the medical loop's own call order."""
+        return [e for e in self.events if e != "chat:classify"]
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         self.calls.append(list(texts))
@@ -151,18 +199,19 @@ class FakeLlm(FakeEmbedder):
         format: dict[str, Any] | None = None,
     ) -> str:
         call = {"messages": messages, "temperature": temperature, "format": format}
-        if format is not None:
-            kind, script = "verify", self._verifier_replies
-        elif messages[0]["content"] == self._condense_prompt:
-            kind, script = "condense", self._condense_replies
-        else:
-            kind, script = "gen", self._gen_replies
+        kind = self._kind(call)
+        script = {
+            "verify": self._verifier_replies,
+            "condense": self._condense_replies,
+            "classify": self._classify_replies,
+            "smalltalk": self._smalltalk_replies,
+            "gen": self._gen_replies,
+        }[kind]
         self.chat_calls.append(call)
         self.events.append(f"chat:{kind}")
         if self.chat_fails:
             raise OllamaError("cannot reach Ollama at http://127.0.0.1:11434 - is it running?")
-        calls = {"verify": self.verifier_calls, "condense": self.condense_calls}
-        index = len(calls.get(kind) or self.generator_calls)
+        index = len(self._calls(kind))
         return script[min(index, len(script)) - 1]
 
 
@@ -192,13 +241,18 @@ def build_app(
     app.state.vector_store = store
     app.state.docstore = Docstore(settings.docstore_path)
     app.state.llm = llm or FakeEmbedder()
+    behaviour = BehaviourStore(settings.behaviour_path)
+    app.state.behaviour_store = behaviour
     app.state.pipeline = build_pipeline(
         Retriever(store, app.state.docstore, app.state.llm, settings),
-        Generator(app.state.llm, settings),
+        Generator(app.state.llm, settings, behaviour),
         Verifier(app.state.llm, settings),
         Condenser(app.state.llm, settings),
         SafetyChecker.load(),
         settings,
+        classifier=IntentClassifier(app.state.llm, settings),
+        smalltalk=SmallTalk(app.state.llm, settings, behaviour),
+        behaviour=behaviour,
     )
     app.state.chat_store = ChatStore(settings.chats_dir)
     return app

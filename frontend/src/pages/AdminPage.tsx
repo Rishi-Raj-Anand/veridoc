@@ -5,6 +5,7 @@ import { useState, type ChangeEvent } from "react";
 
 import { deleteDocument, listDocuments, uploadDocument } from "../api/admin";
 import { ApiError } from "../api/client";
+import { AdminTabs } from "../components/admin/AdminTabs";
 import { DocumentTable } from "../components/admin/DocumentTable";
 import { HealthBanner } from "../components/HealthBanner";
 import { ACCEPTED_EXTENSIONS } from "../constants";
@@ -65,6 +66,7 @@ export function AdminPage() {
   return (
     <div className="space-y-6">
       <h1 className="text-xl font-semibold">Knowledge base</h1>
+      <AdminTabs />
 
       <HealthBanner />
 
@@ -72,7 +74,8 @@ export function AdminPage() {
         <h2 className="text-sm font-semibold text-slate-700">Upload a document</h2>
         <p className="mt-1 text-sm text-slate-500">
           Text-based {ACCEPTED_EXTENSIONS.join(", ")} files only. Scanned or image-only PDFs are
-          rejected.
+          rejected. A CSV becomes one searchable section per row (its first column is the heading),
+          so each row can be cited on its own.
         </p>
         <div className="mt-3 flex items-center gap-3">
           <input

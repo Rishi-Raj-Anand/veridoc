@@ -20,11 +20,10 @@ from uuid import UUID
 from pydantic import BaseModel, Field, ValidationError
 
 from ai_service.config import EMERGENCY_NOTICE
+from ai_service.contracts import ChatStatus, Intent
+from ai_service.storage import atomic_write_text
 
 logger = logging.getLogger(__name__)
-
-REPLACE_ATTEMPTS = 3
-REPLACE_DELAY_SECONDS = 0.1
 
 
 class SessionOwnershipError(Exception):
@@ -37,7 +36,8 @@ class TurnEntry(BaseModel):
     timestamp: str
     # Assistant entries only.
     standalone_query: str | None = None
-    status: Literal["verified", "fallback"] | None = None
+    status: ChatStatus | None = None
+    intent: Intent | None = None
     emergency: bool | None = None
     iterations: int | None = None
     citations: list[dict[str, Any]] | None = None
@@ -118,20 +118,5 @@ class ChatStore:
         self._write(self._path(session_id), transcript)
 
     def _write(self, path: Path, transcript: Transcript) -> None:
-        self._dir.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f"{path.name}.tmp")
         payload = json.dumps(transcript.model_dump(mode="json"), ensure_ascii=False, indent=2)
-        with tmp.open("w", encoding="utf-8", newline="\n") as handle:
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        for attempt in range(1, REPLACE_ATTEMPTS + 1):
-            try:
-                os.replace(tmp, path)
-                return
-            except PermissionError:
-                # Windows: antivirus or the indexer can briefly hold the destination.
-                if attempt == REPLACE_ATTEMPTS:
-                    tmp.unlink(missing_ok=True)
-                    raise
-                time.sleep(REPLACE_DELAY_SECONDS)
+        atomic_write_text(path, payload)

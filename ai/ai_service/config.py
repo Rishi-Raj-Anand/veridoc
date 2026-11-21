@@ -29,6 +29,21 @@ DISCLAIMER = (
     "professional medical advice, diagnosis, or treatment."
 )
 
+# The §7 rules in plain words. Always in the prompts, never editable: the admin's behaviour
+# text (§6.9) can only add restrictions on top of these. Shown read-only on the admin page.
+LOCKED_RULES: tuple[str, ...] = (
+    "Medical answers come only from the uploaded documents, with a citation for every claim.",
+    "Every draft is audited by the Verifier; if it cannot be verified after 3 rounds, the "
+    "fixed fallback message is returned instead of a guess.",
+    "Red-flag emergencies always get the call-112/108 notice first and are never treated as "
+    "small talk or declined.",
+    "Doses, children, pregnancy, breastfeeding and drug interactions are stated only when a "
+    "document states them explicitly; otherwise the user is told to ask a doctor or pharmacist.",
+    "Answers are never presented as a diagnosis.",
+    "Small-talk replies never contain medical information.",
+    "The disclaimer is shown on every reply.",
+)
+
 
 class Settings(BaseSettings):
     """Values from ``ai/.env``; see ``ai/.env.example``."""
@@ -104,6 +119,11 @@ class Settings(BaseSettings):
     def chats_dir(self) -> Path:
         """Chat transcripts (§6.7). Used from task 5.1 onwards."""
         return self.data_dir / "chats"
+
+    @property
+    def behaviour_path(self) -> Path:
+        """Admin-editable assistant behaviour (§6.9)."""
+        return self.data_dir / "behaviour.json"
 
     @property
     def eval_dir(self) -> Path:
