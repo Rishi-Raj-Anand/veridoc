@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| **Status** | ✅ **Built, gate passed 2026-11-21** (merge pending) |
-| **Branch** | `feature/phase-4-verifier` |
+| **Status** | ✅ **Complete — gate passed and merged to `main` 2026-11-21** (merge `9f1e5e0`) |
+| **Branch** | `feature/phase-4-verifier` (merged, then deleted) |
 | **Tasks** | 4.0 – 4.8 |
 | **Gate** | A question answerable only from a parent chunk reaches it by iteration 2; an off-corpus question returns the fallback and never a guess |
 | **Touches** | `ai/` only, plus `CLAUDE.md`. No backend or frontend changes: the §9 `ChatResponse` contract is unchanged |
@@ -188,7 +188,7 @@ Live gate, on a throwaway `DATA_DIR` with both services on 18000/18001:
 
 ## Result (2026-11-21)
 
-**Tasks 4.1 – 4.8 built.** AI service 180 tests (+4 live behind `-m ollama`), backend 148 tests, `ruff check` and `ruff format --check` clean. Commits: `fd3761a` plan, `139be90` code 4.1–4.7.
+**Tasks 4.1 – 4.8 built.** AI service 180 tests (+4 live behind `-m ollama`), backend 148 tests, `ruff check` and `ruff format --check` clean. Commits: `fd3761a` plan, `139be90` code 4.1–4.7, `63961a2` docs + gate result, merged as `9f1e5e0`.
 
 **Live calibration** (in-process on a throwaway `DATA_DIR`, real `qwen3:8b` + `bge-m3`, `disease.md` + a synthetic migraine document):
 
