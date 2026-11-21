@@ -166,6 +166,143 @@ Stop-Process -Id <OwningProcess> -Force
 
 ---
 
+## 6. Project structure
+
+Three services, each in its own folder with its own dependencies. The frontend talks **only** to
+the backend, and the backend talks to the AI service over localhost with a shared key. Only the AI
+service talks to Ollama (CLAUDE.md §4).
+
+```text
+veridoc/
+├── README.md                    # project overview
+├── CLAUDE.md                    # the spec: architecture, rules, API contracts, task plan (read first)
+├── start.md                     # this file: setup, start, check, stop, troubleshoot
+├── .gitignore                   # keeps data/, .env, .venv/, node_modules/ out of git
+├── .gitattributes               # line-ending normalisation (* text=auto)
+├── .claude/plans/               # per-phase plans with recorded test and live-gate results
+│
+├── data/                        # RUNTIME DATA, git-ignored, created on first start
+│   ├── app.db                   #   backend SQLite: users, documents, chat_sessions
+│   ├── uploads/                 #   original uploaded files, stored as <id>_<safe_name>
+│   ├── vectors/                 #   Qdrant vector index (only the AI service may open it)
+│   ├── docstore.db              #   parent chunks (bigger context used on retries)
+│   ├── chats/                   #   one <session_id>.json transcript per chat session
+│   ├── behaviour.json           #   admin-edited assistant behaviour (tone, scope, guardrails)
+│   └── eval/                    #   RAGAS evaluation results (Phase 7)
+│
+├── frontend/                    # React + Vite + TypeScript UI           -> http://localhost:5173
+│   ├── .env.example             #   VITE_API_URL (the backend address)
+│   ├── index.html               #   HTML shell and favicon link
+│   ├── package.json             #   npm scripts: dev, build, lint, typecheck, test
+│   ├── vite.config.ts           #   dev server on 5173, Tailwind plugin, Vitest setup
+│   ├── tsconfig.json            #   strict TypeScript (one config file, on purpose)
+│   ├── eslint.config.js         #   lint rules (no `any`)
+│   ├── public/favicon.svg       #   the shield logo used as the tab icon
+│   └── src/
+│       ├── main.tsx             #   entry: QueryClient, AuthProvider, router
+│       ├── App.tsx              #   all routes and their role guards
+│       ├── index.css            #   Tailwind import, plus the 404 heartbeat animation
+│       ├── constants.ts         #   accepted file types, length limits, disclaimer text
+│       ├── api/                 #   EVERY backend call lives here, fully typed
+│       │   ├── client.ts        #     fetch wrapper: bearer token, sign out on 401, error text
+│       │   ├── auth.ts          #     register / login / me
+│       │   ├── chat.ts          #     send a message -> ChatResponse
+│       │   ├── admin.ts         #     list / upload / delete documents
+│       │   ├── behaviour.ts     #     get / save assistant behaviour
+│       │   └── health.ts        #     service health
+│       ├── context/             #   AuthContext (who is signed in) and its localStorage copy
+│       ├── hooks/useAuth.ts     #   access to the auth context
+│       ├── pages/
+│       │   ├── HomePage.tsx            # /home      landing page with "Try out AI Doctor"
+│       │   ├── LoginPage.tsx           # /login
+│       │   ├── RegisterPage.tsx        # /register  (signs in automatically afterwards)
+│       │   ├── ChatPage.tsx            # /chat      Doctor AI conversation
+│       │   ├── AdminPage.tsx           # /admin     system status, upload, document list
+│       │   ├── AdminBehaviourPage.tsx  # /admin/behaviour  tone, scope, guardrails, locked rules
+│       │   └── NotFoundPage.tsx        # any unknown URL: the funny 404 "patient file"
+│       ├── components/
+│       │   ├── AppLayout.tsx    #     header and navigation around the signed-in pages
+│       │   ├── RequireAuth.tsx  #     route guard: signed out -> /login, wrong role -> /chat
+│       │   ├── RedirectIfAuthed.tsx  # keeps signed-in users off /login and /register
+│       │   ├── AuthCard.tsx     #     shared login/register form
+│       │   ├── HealthBanner.tsx #     "System status" card on the admin page
+│       │   ├── Logo.tsx         #     inline SVG logo
+│       │   ├── routes.ts        #     where each role lands after login
+│       │   ├── chat/            #     message bubbles, Markdown answer, citations,
+│       │   │                    #     emergency and disclaimer banners, input box, "Thinking..."
+│       │   └── admin/           #     admin tabs, document table, status badges
+│       ├── test/                #   test setup and helpers (fake backend, app renderer)
+│       └── **/*.test.ts(x)      #   Vitest tests, next to the code they cover
+│
+├── backend/                     # FastAPI: users, auth, uploads, chat gateway  -> :8000
+│   ├── .env.example             #   JWT secret, admin login, AI service URL + key, limits
+│   ├── pyproject.toml / uv.lock #   Python 3.12 dependencies (managed by uv)
+│   ├── alembic.ini, alembic/    #   database migrations; versions/ holds the schema history
+│   ├── app/
+│   │   ├── main.py              #   app factory, CORS, startup (create data/, seed the admin)
+│   │   ├── config.py            #   all settings from .env (the only place that reads them)
+│   │   ├── db.py                #   SQLAlchemy engine and sessions (foreign keys enforced)
+│   │   ├── deps.py              #   get_db, current user, require_admin
+│   │   ├── models/              #   tables: user.py, document.py, chat_session.py
+│   │   ├── schemas/             #   request and response shapes (Pydantic); types.py makes times UTC
+│   │   ├── routers/
+│   │   │   ├── auth.py          #     /api/auth/register, /login, /me
+│   │   │   ├── chat.py          #     /api/chat/message (checks session ownership)
+│   │   │   ├── admin.py         #     /api/admin/documents: upload, list, delete
+│   │   │   ├── admin_behaviour.py #   /api/admin/behaviour: get, save
+│   │   │   └── health.py        #     /api/health (includes the AI service's health)
+│   │   └── services/
+│   │       ├── auth_service.py  #     Argon2 passwords, JWTs, admin seeding
+│   │       ├── document_service.py  # upload checks (type, size, duplicates), file storage
+│   │       ├── chat_service.py  #     records which user owns each chat session
+│   │       └── ai_client.py     #     HTTP client for the AI service (timeouts, friendly errors)
+│   └── tests/                   #   pytest: auth, uploads, admin guards, chat, AI client, migrations
+│
+└── ai/                          # FastAPI + LangGraph: all AI work           -> 127.0.0.1:8001
+    ├── .env.example             #   Ollama host, model names, thresholds, Top-K, chunk sizes
+    ├── pyproject.toml / uv.lock #   Python 3.12 dependencies (ragas in an optional "eval" group)
+    ├── ai_service/
+    │   ├── main.py              #   startup: opens Qdrant, loads prompts, builds the pipeline
+    │   ├── config.py            #   settings, plus the fixed safety texts (fallback, emergency
+    │   │                        #   notice, disclaimer) and the locked safety rules
+    │   ├── security.py          #   X-Internal-Key check on every route
+    │   ├── deps.py              #   gives routes the objects built at startup
+    │   ├── contracts.py         #   shared Intent and ChatStatus values
+    │   ├── behaviour.py         #   admin-editable behaviour, saved in data/behaviour.json
+    │   ├── storage.py           #   atomic file writes (temp file + replace)
+    │   ├── routers/             #   /internal/ingest + documents, /chat, /behaviour, /health
+    │   ├── ingestion/
+    │   │   ├── parsers.py       #     PDF / DOCX / TXT / MD / CSV -> text with page or section numbers
+    │   │   ├── csv_to_md.py     #     CSV -> Markdown, one section per entry (also a CLI)
+    │   │   ├── chunker.py       #     parent (~800 tokens) and child (~300 tokens) chunks
+    │   │   └── indexer.py       #     embeds children, writes Qdrant and the parent store
+    │   ├── retrieval/
+    │   │   ├── vector_store.py  #     Qdrant collection "chunks" (1024-dim, cosine)
+    │   │   ├── docstore.py      #     SQLite parent chunks
+    │   │   └── retriever.py     #     Top-3 / Top-8 / Top-15 search, score gate, numbered sources
+    │   ├── agents/
+    │   │   ├── safety.py + safety_terms.yaml  # red-flag emergency detection (rules, no LLM)
+    │   │   ├── classifier.py    #     medical / small talk / off-topic routing
+    │   │   ├── smalltalk.py     #     short friendly replies with no medical content
+    │   │   ├── condenser.py     #     rewrites a follow-up into a standalone question
+    │   │   ├── generator.py     #     drafts the cited answer from the sources only
+    │   │   ├── verifier.py      #     audits the draft (faithfulness, relevance -> pass/fail)
+    │   │   ├── citations.py     #     cleans [n] markers, detects "not in documents"
+    │   │   ├── budget.py        #     keeps prompts inside the 8,192-token window
+    │   │   └── admin_text.py    #     appends the admin's tone and guardrails to the prompts
+    │   ├── prompts/             #   the system prompts as Markdown: generator, verifier,
+    │   │                        #   condense, classify, smalltalk
+    │   ├── graph/
+    │   │   ├── state.py         #     what one chat turn carries through the graph
+    │   │   └── pipeline.py      #     the LangGraph: safety -> classify -> condense ->
+    │   │                        #     retrieve -> generate -> verify -> escalate / finalize / fallback
+    │   ├── llm/ollama_client.py #   the ONLY module that calls Ollama (num_ctx, no thinking, retries)
+    │   └── memory/chat_store.py #   chat transcripts in data/chats/
+    └── tests/                   #   pytest with a fake LLM; tests marked "ollama" need the real one
+```
+
+---
+
 ## Extras
 
 **Preview how a CSV will be indexed.** You can upload a `.csv` directly; this only shows what
