@@ -1,1 +1,24 @@
 @import "tailwindcss";
+
+/* 404 page: the EKG line draws itself (two beats), then flatlines. pathLength="1" on the
+   <path> normalises its length so one dash value fits any drawing. */
+@keyframes ekg-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.ekg-line {
+  stroke-dasharray: 1;
+  animation: ekg-draw 3.2s linear forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ekg-line {
+    animation: none;
+    stroke-dasharray: none;
+  }
+}
