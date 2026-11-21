@@ -160,7 +160,7 @@ Manual gate (three terminals: Ollama running, AI service without `--reload`, bac
 
 ## Result (2026-11-21)
 
-**Tasks 2.1 – 2.10 built.** AI service 87 tests (+1 live test behind `-m ollama`, passing), backend
+**Tasks 2.1 – 2.10 built.** AI service 88 tests (+1 live test behind `-m ollama`, passing), backend
 128 tests, `ruff check` and `ruff format --check` clean in both. Commits: `075be7c` plan ·
 `a1e73ac` 2.1–2.2 · `1b7a155` 2.3–2.5 · `c82547d` 2.6 · `ce4d93c` 2.7–2.10.
 
@@ -171,7 +171,7 @@ model load); DOCX and MD → `ready` with section-index pages; image-only PDF �
 removed the file, the docstore parents (4 → 0) and the vectors (log: `points=12 parents=4`).
 `ollama ps`: `bge-m3` 689 MB, 100% GPU at `num_ctx=8192`.
 
-**Gate: PASSED 2026-11-21** on `documents/disease.md` (5 KB Markdown, a 10-disease table), run on spare ports 18000/18001 with a throwaway `DATA_DIR`: `ready` in 1 s, `chunk_count` 6 / 3 parents (~58 + 747 + 438 tokens), duplicate 409, delete 204 → points 6, parents 3, file and row all removed. The first file supplied, a 6-page WHO malaria PDF, came from "Microsoft: Print To PDF" (≈3,000 outlined-glyph drawings per page, zero text) and was correctly rejected with the scanned-PDF message. A real text-layer PDF has not been ingested yet; the PDF parser is covered by synthetic PDFs only.
+**Gate: PASSED 2026-11-21** on `documents/disease.md` (5 KB Markdown, a 10-disease table), run on spare ports 18000/18001 with a throwaway `DATA_DIR`: `ready` in 1 s, `chunk_count` 6 / 3 parents (~58 + 747 + 438 tokens), duplicate 409, delete 204 → points 6, parents 3, file and row all removed. The first file supplied, a 6-page WHO malaria PDF, came from "Microsoft: Print To PDF" (≈3,000 outlined-glyph drawings per page, zero text) and was correctly rejected with the scanned-PDF message. A real text-layer PDF was ingested afterwards: a 1-page Google Docs résumé export (120 KB) went `pending` → `ready` in 1 s (3,686 chars, 2 parents ~641 + ~261 tokens, 4 children), duplicate 409, retrieval returned it with its filename and page 1, and delete removed 4 points, 2 parents, the file and the row. **Finding:** the export carried 48 zero-width spaces (U+200B) that survived whitespace normalisation; `normalise_text` now strips U+200B, U+2060 and U+FEFF (ZWJ/ZWNJ kept on purpose). **For 4.8:** the query "what is the CGPA" scored 0.276 against its chunk, under `MIN_RETRIEVAL_SCORE` 0.35, so short factual questions can fall below the gate and need calibrating.
 
 **Follow-up done: row-aware table chunking.** `disease.md` first showed that a Markdown table is one blank-line-delimited block, so child windows cut it mid-row and a chunk could lose its row label ("how is malaria prevented" ranked a cold/flu chunk first). The chunker now detects tables (`_split_tables`: a `|` run whose 2nd line is a separator row), splits them on row boundaries with the header repeated (`split_table`), and folds a heading directly above a table into every piece so the section name survives a split across parents. Re-run on `disease.md` with live `bge-m3`: children went from 6 mid-row slices to 8 row-aligned chunks (2 rows each, ~140-280 tokens); "how is malaria prevented" now ranks the malaria-row chunk first (0.508), "treatment for the common cold" the cold row (0.564), "how is tuberculosis treated" the TB row (0.638). A `*Note*` paragraph between a heading and its table keeps the heading with the note instead (by design: only an immediately adjacent heading is folded). Calibration of `MIN_RETRIEVAL_SCORE` stays with task 4.8.
 
