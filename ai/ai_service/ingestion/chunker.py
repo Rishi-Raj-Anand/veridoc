@@ -23,6 +23,8 @@ TINY_PARENT_FRACTION = 0.25
 MERGE_CEILING = 1.25
 
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+# A Markdown table's second line: ``| --- | :---: |``.
+_TABLE_SEPARATOR = re.compile(r"^\s*\|(\s*:?-+:?\s*\|)+\s*$")
 
 
 def estimate_tokens(text: str) -> int:
@@ -50,9 +52,19 @@ class ChildChunk:
 class _Block:
     page: int
     text: str
+    is_table: bool = False
+    # For a table block: the heading folded into it (``text`` then starts with it).
+    title: str = ""
+
+    @property
+    def table_body(self) -> str:
+        """The table lines alone, without the folded-in title."""
+        return self.text[len(self.title) + 2 :] if self.title else self.text
 
     @property
     def is_heading(self) -> bool:
+        if self.is_table:
+            return False
         stripped = self.text.strip()
         if "\n" in stripped or len(stripped) > HEADING_MAX_CHARS:
             return False
@@ -102,6 +114,71 @@ def split_oversize(text: str, max_chars: int) -> list[str]:
     return pieces
 
 
+def _split_tables(paragraph: str) -> list[tuple[str, bool]]:
+    """Split a paragraph into ``(text, is_table)`` runs.
+
+    A Markdown table is a run of ``|`` lines whose second line is a separator row. Anything
+    else - including pipe-lines without a separator - stays plain text.
+    """
+    runs: list[tuple[str, bool]] = []
+    plain: list[str] = []
+    lines = paragraph.split("\n")
+    i = 0
+    while i < len(lines):
+        if lines[i].lstrip().startswith("|"):
+            j = i
+            while j < len(lines) and lines[j].lstrip().startswith("|"):
+                j += 1
+            group = lines[i:j]
+            if len(group) >= 2 and _TABLE_SEPARATOR.match(group[1]):
+                if plain:
+                    runs.append(("\n".join(plain), False))
+                    plain = []
+                runs.append(("\n".join(group), True))
+            else:
+                plain.extend(group)
+            i = j
+        else:
+            plain.append(lines[i])
+            i += 1
+    if plain:
+        runs.append(("\n".join(plain), False))
+    return runs
+
+
+def split_table(table: str, max_chars: int, title: str = "") -> list[str]:
+    """Split a Markdown table on row boundaries, repeating the header in every piece.
+
+    Each piece is a complete, valid table (``title`` + header + separator + whole rows), so a
+    chunk never starts mid-row and never loses the column names. A single row too long for
+    the budget is cut at whitespace rather than dropped.
+    """
+    lines = table.split("\n")
+    header = "\n".join(lines[:2])
+    prefix = f"{title}\n\n{header}" if title else header
+    rows = lines[2:]
+    budget = max(max_chars - len(prefix) - 1, max_chars // 2)
+
+    pieces: list[str] = []
+    current: list[str] = []
+    used = 0
+
+    def flush() -> None:
+        nonlocal current, used
+        if current:
+            pieces.append(prefix + "\n" + "\n".join(current))
+        current, used = [], 0
+
+    for row in rows:
+        for part in _hard_split(row, budget) if len(row) > budget else [row]:
+            if current and used + len(part) + 1 > budget:
+                flush()
+            current.append(part)
+            used += len(part) + 1
+    flush()
+    return pieces or [prefix]
+
+
 def _blocks(pages: list[PageText], max_chars: int) -> list[_Block]:
     blocks: list[_Block] = []
     for page in pages:
@@ -109,9 +186,21 @@ def _blocks(pages: list[PageText], max_chars: int) -> list[_Block]:
             paragraph = paragraph.strip()
             if not paragraph:
                 continue
-            blocks.extend(
-                _Block(page.page, piece) for piece in split_oversize(paragraph, max_chars)
-            )
+            for text, is_table in _split_tables(paragraph):
+                if is_table:
+                    # A heading right above the table goes *into* every table piece, so the
+                    # section name survives however the table is split across chunks.
+                    title = ""
+                    if blocks and blocks[-1].page == page.page and blocks[-1].is_heading:
+                        title = blocks.pop().text
+                    blocks.extend(
+                        _Block(page.page, piece, is_table=True, title=title)
+                        for piece in split_table(text, max_chars, title)
+                    )
+                else:
+                    blocks.extend(
+                        _Block(page.page, piece) for piece in split_oversize(text, max_chars)
+                    )
     return blocks
 
 
@@ -187,6 +276,39 @@ def _child_windows(text: str, size_chars: int, overlap_chars: int) -> list[tuple
     return windows
 
 
+def _children_of_parent(
+    group: list[_Block], child_chars: int, overlap_chars: int
+) -> list[tuple[int, str]]:
+    """``(page, text)`` children of one parent.
+
+    Prose is windowed with overlap. A table is split on row boundaries with its header
+    (and the heading folded into it, see ``_blocks``) repeated in every piece.
+    """
+    children: list[tuple[int, str]] = []
+    run: list[_Block] = []
+
+    def flush_run() -> None:
+        if not run:
+            return
+        text = _join(run)
+        for start, end in _child_windows(text, child_chars, overlap_chars):
+            piece = text[start:end].strip()
+            if piece:
+                children.append((_page_at(run, start), piece))
+        run.clear()
+
+    for block in group:
+        if not block.is_table:
+            run.append(block)
+            continue
+        flush_run()
+        children.extend(
+            (block.page, piece) for piece in split_table(block.table_body, child_chars, block.title)
+        )
+    flush_run()
+    return children
+
+
 def chunk_document(
     doc_id: int, pages: list[PageText], settings: Settings
 ) -> tuple[list[ParentChunk], list[ChildChunk]]:
@@ -210,15 +332,13 @@ def chunk_document(
                 text=text,
             )
         )
-        for start, end in _child_windows(text, child_chars, overlap_chars):
-            piece = text[start:end].strip()
-            if piece:
-                children.append(
-                    ChildChunk(
-                        parent_id=parent_id,
-                        chunk_index=len(children),
-                        page=_page_at(group, start),
-                        text=piece,
-                    )
+        for page, piece in _children_of_parent(group, child_chars, overlap_chars):
+            children.append(
+                ChildChunk(
+                    parent_id=parent_id,
+                    chunk_index=len(children),
+                    page=page,
+                    text=piece,
                 )
+            )
     return parents, children

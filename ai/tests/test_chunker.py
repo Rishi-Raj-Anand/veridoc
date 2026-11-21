@@ -11,6 +11,7 @@ from ai_service.ingestion.chunker import (
     estimate_tokens,
     make_parent_id,
     split_oversize,
+    split_table,
 )
 from ai_service.ingestion.parsers import PageText
 
@@ -162,3 +163,150 @@ def test_split_oversize_handles_text_without_spaces_or_sentences() -> None:
 
     assert all(len(p) <= 1000 for p in pieces)
     assert "".join(pieces) == "x" * 2500
+
+
+# --- Markdown tables ---------------------------------------------------------------------
+
+HEADER = "| Disease | Cause | Symptoms | Prevention | Treatment |"
+SEPARATOR = "| --- | --- | --- | --- | --- |"
+
+
+def table_row(i: int, width: int = 60) -> str:
+    return (
+        f"| **{i}. Disease{i}** | cause{i} "
+        + "c" * width
+        + f" | symptoms{i} "
+        + "s" * width
+        + f" | prevention{i} "
+        + "p" * width
+        + f" | treatment{i} "
+        + "t" * width
+        + " |"
+    )
+
+
+def make_table(n_rows: int, width: int = 60) -> str:
+    return "\n".join([HEADER, SEPARATOR, *(table_row(i, width) for i in range(1, n_rows + 1))])
+
+
+def table_children(children: list) -> list:
+    return [c for c in children if c.text.count("\n") >= 1 and "| --- |" in c.text]
+
+
+def test_table_children_never_cut_a_row_and_always_carry_the_header() -> None:
+    page = PageText(1, f"### Infectious Diseases\n\n{make_table(20)}")
+
+    _, children = chunk_document(1, [page], make_settings())
+
+    pieces = table_children(children)
+    assert len(pieces) > 1
+    for child in pieces:
+        lines = child.text.split("\n")
+        assert HEADER in lines and SEPARATOR in lines
+        rows = [line for line in lines if line.startswith("| **")]
+        assert rows and all(row.endswith("|") for row in rows)
+
+
+def test_every_table_row_appears_exactly_once_across_children() -> None:
+    page = PageText(1, make_table(25))
+
+    _, children = chunk_document(1, [page], make_settings())
+
+    text = "\n".join(c.text for c in children)
+    for i in range(1, 26):
+        assert text.count(f"| **{i}. Disease{i}** |") == 1
+
+
+def test_a_heading_above_a_table_travels_with_every_table_piece() -> None:
+    page = PageText(1, f"### Infectious Diseases\n\n{make_table(20)}")
+
+    _, children = chunk_document(1, [page], make_settings())
+
+    pieces = table_children(children)
+    assert all(c.text.startswith("### Infectious Diseases\n\n| Disease") for c in pieces)
+    # ...and the heading is not also left behind as a tiny child of its own
+    assert not any(c.text.strip() == "### Infectious Diseases" for c in children)
+
+
+def test_table_children_stay_near_the_child_size() -> None:
+    settings = make_settings()
+    page = PageText(1, make_table(20))
+
+    _, children = chunk_document(1, [page], settings)
+
+    assert all(estimate_tokens(c.text) <= settings.child_chunk_tokens + 20 for c in children)
+
+
+def test_a_table_larger_than_a_parent_splits_into_valid_tables() -> None:
+    settings = make_settings()
+    page = PageText(1, make_table(30))
+
+    parents, _ = chunk_document(1, [page], settings)
+
+    assert len(parents) > 1
+    for parent in parents:
+        assert parent.text.startswith(f"{HEADER}\n{SEPARATOR}")
+        assert estimate_tokens(parent.text) <= settings.parent_chunk_tokens * 1.25
+
+
+def test_prose_around_a_table_is_chunked_as_before() -> None:
+    before = paragraph(40, "before")
+    after = paragraph(40, "after")
+    page = PageText(1, f"{before}\n\n{make_table(3)}\n\n{after}")
+
+    parents, children = chunk_document(1, [page], make_settings())
+
+    assert len(parents) == 1
+    assert any("before0" in c.text and "| --- |" not in c.text for c in children)
+    assert any("after0" in c.text and "| --- |" not in c.text for c in children)
+    assert len(table_children(children)) == 1
+
+
+def test_a_table_glued_to_the_preceding_line_is_still_detected() -> None:
+    page = PageText(1, f"Summary of diseases:\n{make_table(3)}")
+
+    _, children = chunk_document(1, [page], make_settings())
+
+    assert len(table_children(children)) == 1
+    assert any(c.text.strip() == "Summary of diseases:" for c in children)
+
+
+def test_pipe_lines_without_a_separator_are_plain_text() -> None:
+    page = PageText(1, "| not | a table |\n| just | pipes |")
+
+    parents, children = chunk_document(1, [page], make_settings())
+
+    assert len(children) == 1
+    assert children[0].text == parents[0].text == "| not | a table |\n| just | pipes |"
+
+
+def test_a_single_oversize_row_is_bounded_not_dropped() -> None:
+    settings = make_settings()
+    huge = f"| **1. Big** | {'word ' * 600} | x |"
+    page = PageText(1, "\n".join([HEADER, SEPARATOR, huge]))
+
+    _, children = chunk_document(1, [page], settings)
+
+    limit = settings.child_chunk_tokens * CHARS_PER_TOKEN + len(HEADER) + len(SEPARATOR) + 10
+    assert len(children) > 1
+    assert all(len(c.text) <= limit for c in children)
+    assert "word" in "".join(c.text for c in children)
+
+
+def test_split_table_pieces_are_each_header_plus_whole_rows() -> None:
+    pieces = split_table(make_table(10), 1500)
+
+    assert len(pieces) > 1
+    assert all(p.startswith(f"{HEADER}\n{SEPARATOR}\n| **") for p in pieces)
+    rows = [line for p in pieces for line in p.split("\n") if line.startswith("| **")]
+    assert rows == [table_row(i) for i in range(1, 11)]
+
+
+def test_the_heading_is_in_every_parent_when_a_table_spans_several() -> None:
+    page = PageText(1, f"### Infectious Diseases\n\n{make_table(30)}")
+
+    parents, children = chunk_document(1, [page], make_settings())
+
+    assert len(parents) > 1
+    assert all(p.text.startswith("### Infectious Diseases\n\n| Disease") for p in parents)
+    assert all(c.text.startswith("### Infectious Diseases\n\n| Disease") for c in children)

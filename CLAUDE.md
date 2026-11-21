@@ -193,6 +193,7 @@ veridoc/
 4. **Chunking (parent–child):**
    - Parent chunks ≈ **800 tokens**, split on paragraph/heading boundaries where possible.
    - Child chunks ≈ **300 tokens** with **50 token overlap**, each linked to its `parent_id`.
+   - **Markdown tables are split on row boundaries**, never mid-row: every table chunk is a complete table (heading directly above it + header row + separator + whole rows), with no overlap. A row longer than a chunk is cut at whitespace rather than dropped.
    - Token estimate: `len(text) / 4` (no tokenizer dependency) unless changed deliberately.
 5. Embed **child chunks only** with `bge-m3` (**vector size 1024, cosine distance** — measured, see §2); upsert to Qdrant collection `chunks` with payload `{doc_id, filename, page, parent_id, chunk_index, text}`.
 6. Store parent chunks in `data/docstore.db` keyed by `parent_id` (with `doc_id`, `filename`, `page_start`, `page_end`, `text`).
@@ -619,7 +620,7 @@ frontend 3 tests, ruff + ruff format + ESLint + tsc + prettier all clean.
 Build the AI side first (testable standalone), then wire the backend.
 
 - ✅ **2.1** `ingestion/parsers.py` — PyMuPDF with real page numbers; `python-docx`; DOCX/MD → heading-based section index, TXT → page 1. Near-zero text PDF → `"scanned or image-only PDF is not supported"`.
-- ✅ **2.2** `ingestion/chunker.py` — parents ≈ 800 tokens on paragraph/heading boundaries; children ≈ 300 tokens / 50 overlap carrying `parent_id`; `len(text) / 4` estimator.
+- ✅ **2.2** `ingestion/chunker.py` — parents ≈ 800 tokens on paragraph/heading boundaries; children ≈ 300 tokens / 50 overlap carrying `parent_id`; `len(text) / 4` estimator. Markdown tables split on row boundaries with the header repeated in every chunk.
 - ✅ **2.3** `retrieval/vector_store.py` — one embedded `QdrantClient(path=...)` as a module singleton (single process only), collection `chunks`, **vector size 1024 + cosine**, payload per §6.1.5, delete-by-`doc_id` filter.
 - ✅ **2.4** `retrieval/docstore.py` — SQLite parents keyed by `parent_id`.
 - ✅ **2.5** `llm/ollama_client.py` — the **only** module that calls `ollama`: `embed()` + `chat()`, always `options={num_ctx, temperature}`, `think=False`, `keep_alive="30m"`, batched embedding, retry + timeout.
@@ -631,7 +632,7 @@ Build the AI side first (testable standalone), then wire the backend.
 
 **Gate:** uploading a real PDF via `/api/admin/documents` flips the status to `ready` with a sane `chunk_count`; delete removes its points and parents.
 
-**Status 2026-11-21:** 2.1–2.10 built; AI 76 tests, backend 128 tests, ruff clean. Live smoke on a throwaway `DATA_DIR` with real `bge-m3`: a synthetic 4-page PDF → `ready` (12 chunks, 4 parents, pages 1–4), DOCX and MD → `ready`, an image-only PDF → `failed` with the exact scanned-PDF message, `.png` 415, duplicate 409, anonymous 401, delete removed points + parents + file. `bge-m3` at `num_ctx=8192` sits at 689 MB, 100% GPU (matches §2). **Gate: PASSED 2026-11-21** with a real reference document, `disease.md` (5 KB Markdown, 10 diseases in one table): upload → `ready`, `chunk_count` 6 (3 parents, ~1,243 tokens, matching the file size), a duplicate re-upload 409, sample queries embedded with live `bge-m3` retrieve the right chunks at scores 0.5–0.6, and delete → 204 with points (6), parents (3), file and row all gone. The WHO malaria PDF supplied first was made by "Microsoft: Print To PDF" with outlined glyphs and **no text layer**, so it was correctly rejected as scanned/image-only; the PDF path itself is covered by synthetic PDFs (real page numbers, 4 pages → `ready`), not yet by a real text-layer PDF.
+**Status 2026-11-21:** 2.1–2.10 built; AI 87 tests, backend 128 tests, ruff clean. Live smoke on a throwaway `DATA_DIR` with real `bge-m3`: a synthetic 4-page PDF → `ready` (12 chunks, 4 parents, pages 1–4), DOCX and MD → `ready`, an image-only PDF → `failed` with the exact scanned-PDF message, `.png` 415, duplicate 409, anonymous 401, delete removed points + parents + file. `bge-m3` at `num_ctx=8192` sits at 689 MB, 100% GPU (matches §2). **Gate: PASSED 2026-11-21** with a real reference document, `disease.md` (5 KB Markdown, 10 diseases in one table): upload → `ready`, `chunk_count` 6 (3 parents, ~1,243 tokens, matching the file size), a duplicate re-upload 409, sample queries embedded with live `bge-m3` retrieve the right chunks at scores 0.5–0.6, and delete → 204 with points (6), parents (3), file and row all gone. The WHO malaria PDF supplied first was made by "Microsoft: Print To PDF" with outlined glyphs and **no text layer**, so it was correctly rejected as scanned/image-only; the PDF path itself is covered by synthetic PDFs (real page numbers, 4 pages → `ready`), not yet by a real text-layer PDF.
 
 ### Phase 3 — Single-pass pipeline (M4)
 
