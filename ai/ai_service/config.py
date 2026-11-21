@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     min_retrieval_score: float = 0.35
     max_iterations: int = 3
     history_max_messages: int = 6
+    # Chunking and embedding shape (§6.1). Changing any of these means re-ingesting
+    # every document: existing vectors and parents were built with the old values.
+    parent_chunk_tokens: int = 800
+    child_chunk_tokens: int = 300
+    child_chunk_overlap_tokens: int = 50
+    embed_dim: int = 1024
 
     @field_validator("data_dir")
     @classmethod
@@ -47,6 +53,11 @@ class Settings(BaseSettings):
         value to make a wrong working directory obvious immediately.
         """
         return value.expanduser().resolve()
+
+    @property
+    def uploads_dir(self) -> Path:
+        """Original admin-uploaded files, written by the backend (§5)."""
+        return self.data_dir / "uploads"
 
     @property
     def vectors_dir(self) -> Path:
