@@ -15,3 +15,12 @@ def test_bge_m3_returns_1024_dim_vectors() -> None:
 
     assert len(vectors) == 2
     assert all(len(v) == 1024 for v in vectors)
+
+
+def test_qwen3_chat_returns_text_without_thinking() -> None:
+    reply = OllamaClient(Settings(_env_file=None)).chat(
+        [{"role": "user", "content": "Reply with the single word: ready"}], temperature=0
+    )
+
+    assert reply.strip()
+    assert "<think>" not in reply
