@@ -118,6 +118,25 @@ describe("ChatPage", () => {
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   });
 
+  it("renders small talk as a plain reply with no Sources section", async () => {
+    mockApi({
+      "GET /api/auth/me": { body: user() },
+      "POST /api/chat/message": reply({
+        answer: "Hi! I'm Doctor AI. Ask me a health question.",
+        citations: [],
+        status: "smalltalk",
+      }),
+    });
+    renderApp("/chat", "user");
+
+    ask("hi");
+
+    expect(await screen.findByText("Hi! I'm Doctor AI. Ask me a health question.")).toBeDefined();
+    expect(screen.queryByText("Sources")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText(DISCLAIMER)).toBeDefined();
+  });
+
   it("does not send a blank message", () => {
     const calls = mockApi({ "GET /api/auth/me": { body: user() } });
     renderApp("/chat", "user");

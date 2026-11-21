@@ -24,14 +24,18 @@ export function AssistantBubble({ response }: { response: ChatResponse }) {
   const { notice, body } = response.emergency
     ? splitEmergencyNotice(response.answer)
     : { notice: null, body: response.answer };
-  // A fallback is a safe non-answer, not a failure: same bubble, softer accent.
-  const accent = response.status === "fallback" ? "border-amber-200" : "border-slate-200";
+  // A fallback is a safe non-answer, not a failure: same bubble, softer accent. Small talk and
+  // off-topic refusals carry no citations, so the Sources list simply does not render.
+  const accent =
+    response.status === "fallback"
+      ? "border-amber-200 bg-white"
+      : response.status === "out_of_scope"
+        ? "border-slate-300 bg-slate-50"
+        : "border-slate-200 bg-white";
 
   return (
     <div className="flex">
-      <div
-        className={`max-w-[85%] rounded-2xl rounded-bl-sm border ${accent} bg-white px-4 py-3 shadow-sm`}
-      >
+      <div className={`max-w-[85%] rounded-2xl rounded-bl-sm border ${accent} px-4 py-3 shadow-sm`}>
         {notice !== null && <EmergencyBanner notice={notice} />}
         {body !== "" && <AnswerBody text={body} />}
         <CitationList citations={response.citations} />

@@ -16,7 +16,8 @@ export interface ChatMessageRequest {
 export interface ChatResponse {
   answer: string;
   citations: Citation[];
-  status: "verified" | "fallback";
+  /** verified/fallback: the medical RAG loop. smalltalk/out_of_scope: intent routing (§6.9). */
+  status: "verified" | "fallback" | "smalltalk" | "out_of_scope";
   emergency: boolean;
   disclaimer: string;
 }

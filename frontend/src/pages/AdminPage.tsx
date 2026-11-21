@@ -5,6 +5,7 @@ import { useState, type ChangeEvent } from "react";
 
 import { deleteDocument, listDocuments, uploadDocument } from "../api/admin";
 import { ApiError } from "../api/client";
+import { AdminTabs } from "../components/admin/AdminTabs";
 import { DocumentTable } from "../components/admin/DocumentTable";
 import { HealthBanner } from "../components/HealthBanner";
 import { ACCEPTED_EXTENSIONS } from "../constants";
@@ -65,6 +66,7 @@ export function AdminPage() {
   return (
     <div className="space-y-6">
       <h1 className="text-xl font-semibold">Knowledge base</h1>
+      <AdminTabs />
 
       <HealthBanner />
 

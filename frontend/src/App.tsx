@@ -10,6 +10,7 @@ import { Navigate, Route, Routes } from "react-router";
 import { AppLayout } from "./components/AppLayout";
 import { RedirectIfAuthed } from "./components/RedirectIfAuthed";
 import { RequireAuth } from "./components/RequireAuth";
+import { AdminBehaviourPage } from "./pages/AdminBehaviourPage";
 import { AdminPage } from "./pages/AdminPage";
 import { ChatPage } from "./pages/ChatPage";
 import { HomePage } from "./pages/HomePage";
@@ -52,6 +53,14 @@ export default function App() {
           element={
             <RequireAuth role="admin">
               <AdminPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/admin/behaviour"
+          element={
+            <RequireAuth role="admin">
+              <AdminBehaviourPage />
             </RequireAuth>
           }
         />
