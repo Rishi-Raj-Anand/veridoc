@@ -20,7 +20,7 @@ The first version is a medical-information assistant:
 6. The admin can tune the assistant's tone, scope, refusal text and extra guardrails from the admin page. These only add restrictions; the §7 rules stay locked (§6.9).
 
 ### Hard constraints
-- **Text only.** Supported uploads: **PDF, TXT, MD, DOCX**. No images, audio, video, or scanned/OCR PDFs — reject them with a clear error.
+- **Text only.** Supported uploads: **PDF, TXT, MD, DOCX**. No images, audio, video, or scanned/OCR PDFs — reject them with a clear error. **CSV is not uploaded directly:** convert it to Markdown first with `ai_service.ingestion.csv_to_md` (§12).
 - **All AI runs locally through Ollama** (generation + embeddings). Never add OpenAI, Anthropic, or any cloud LLM/embedding API.
 - **Exactly one admin account**, created at startup from environment variables. Users cannot become admin.
 - **Windows + PowerShell** is the development environment. All commands and paths must work there.
@@ -566,6 +566,17 @@ uv run alembic upgrade head
 ```
 
 **Check GPU usage** — `ollama ps` should show the model at `100% GPU`. If it shows CPU, the context or model is too large for 8 GB.
+
+**Convert a CSV for upload** (standard library only; writes `<name>.md` next to the CSV)
+```powershell
+cd ai
+uv run python -m ai_service.ingestion.csv_to_md path	o\diseases.csv
+# options: --title-column Disease | --layout table | --underscores-to-spaces | --out x.md | --force
+```
+- **Default layout:** one `## <title>` section per entry, so a citation's "p. N" is the N-th entry. The title is the first column unless `--title-column` names another.
+- **Merging:** rows with the same title are merged, and numbered columns (`Symptom_1`, `Symptom_2`…) become one line.
+- **Table layout:** `--layout table` keeps a single Markdown table, which suits narrow data; the chunker splits it on row boundaries (§6.1).
+- **Encoding:** the CSV must be UTF-8 (an Excel BOM is fine). Comma, semicolon, tab and pipe delimiters are detected.
 
 **RAGAS evaluation**
 ```powershell
