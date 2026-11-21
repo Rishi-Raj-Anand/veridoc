@@ -130,6 +130,7 @@ layout, because `tsc --noEmit` (what `npm run typecheck` runs) conflicts with th
 veridoc/
 ├── CLAUDE.md
 ├── README.md
+├── start.md                 # how to set up, start, check and stop every service
 ├── .gitignore                 # must ignore data/, .env, .venv/, node_modules/
 ├── .gitattributes             # * text=auto
 ├── data/                      # runtime data, gitignored (created on startup)
@@ -497,6 +498,8 @@ Phase 1 (auth) needed no new variables; `JWT_SECRET` should be at least 32 bytes
 ---
 
 ## 12. Commands (Windows PowerShell)
+
+> Day-to-day start-up, the one-shot launcher and troubleshooting are in [`start.md`](start.md). Keep it in sync with this section.
 
 > Use `;` to chain commands (Windows PowerShell 5.1 has no `&&`). Run each service in its own terminal.
 
