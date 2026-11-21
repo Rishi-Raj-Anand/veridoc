@@ -110,3 +110,56 @@ async def test_delete_failure_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with pytest.raises(AiServiceError, match="boom"):
         await ai_client.delete_document_index(settings(), 9)
+
+
+async def test_ingest_waits_for_the_configured_number_of_minutes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    timeouts: list[object] = []
+
+    class RecordingClient(httpx.AsyncClient):
+        def __init__(self, **kwargs: object) -> None:
+            timeouts.append(kwargs.pop("timeout", None))
+            transport = httpx.MockTransport(lambda _r: httpx.Response(200, json={"chunk_count": 1}))
+            super().__init__(transport=transport, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(ai_client.httpx, "AsyncClient", RecordingClient)
+    configured = Settings(
+        _env_file=None,
+        internal_api_key="shared-key",
+        ai_service_url="http://ai:8001",
+        ingest_timeout_minutes=45,
+    )
+
+    await ai_client.ingest_document(configured, 1, "p", "f.csv")
+
+    assert timeouts == [45 * 60.0]
+
+
+async def test_an_ingest_that_runs_too_long_says_so_instead_of_is_it_running(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def slow(_request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("timed out")
+
+    mock_ai(monkeypatch, slow)
+
+    with pytest.raises(AiServiceError) as excinfo:
+        await ai_client.ingest_document(settings(), 1, "p", "big.csv")
+
+    message = str(excinfo.value)
+    assert message.startswith("Indexing did not finish within 60 minutes")
+    assert "INGEST_TIMEOUT_MINUTES" in message
+    assert "is it running" not in message
+
+
+async def test_other_slow_calls_get_a_plain_timeout_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def slow(_request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("timed out")
+
+    mock_ai(monkeypatch, slow)
+
+    with pytest.raises(AiServiceError, match=r"did not answer within 30 seconds"):
+        await ai_client.delete_document_index(settings(), 1)

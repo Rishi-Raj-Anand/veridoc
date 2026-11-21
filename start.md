@@ -160,6 +160,8 @@ Stop-Process -Id <OwningProcess> -Force
 | A brand-new, empty `data` folder appears in the wrong place | A service was started from the wrong folder. Start each one from its own folder; both log the resolved data path at startup. |
 | `npm : running scripts is disabled on this system` | PowerShell execution policy. Run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or use `npm.cmd run dev`. |
 | `Port 5173 is already in use` | An old Vite window is still running. Close it or free the port (section 4). |
+| Upload `failed`: "Indexing did not finish within 60 minutes…" | The file is too big for the wait time (`bge-m3` embeds ~45 chunks/s; a 22 MB CSV takes ~10–12 min). Delete the row, then split the file or raise `INGEST_TIMEOUT_MINUTES` in `backend\.env`. |
+| Delete says "could not remove this document from the search index" | The AI service was down or busy, so nothing was deleted on purpose (the index and the list stay in sync). Start the AI service and click Delete again. |
 | An answer takes 30–90 s | Normal: the LLM and the embedding model swap in 8 GB of VRAM (CLAUDE.md §6.8). Small talk and refusals are near-instant. |
 
 ---

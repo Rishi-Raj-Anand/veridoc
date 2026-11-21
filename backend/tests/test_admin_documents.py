@@ -396,3 +396,17 @@ async def test_a_csv_upload_is_accepted_and_sent_for_ingestion(
     assert response.status_code == 201
     assert response.json()["filename"] == "diseases.csv"
     assert fake_ai.ingested[0][2] == "diseases.csv"
+
+
+async def test_listed_times_are_marked_utc_so_browsers_show_local_time(
+    client: httpx.AsyncClient,
+) -> None:
+    """SQLite drops the timezone; without a "Z" the browser shows UTC as if it were local."""
+    async with client:
+        headers = await admin_headers(client)
+        uploaded = await upload(client, headers)
+        listed = await client.get(URL, headers=headers)
+
+    created = listed.json()[0]["created_at"]
+    assert created.endswith("Z")
+    assert created == uploaded.json()["created_at"]

@@ -306,6 +306,12 @@ is a non-streaming UI with a "Thinking…" indicator. Rules:
   timeouts well above that.
 - During ingestion only `bge-m3` is needed — embed all child chunks in one batched pass so
   the LLM is never swapped in mid-ingest.
+- Ingestion throughput, measured 2026-11-21: `bge-m3` embeds about **45 child chunks/s** on the
+  target GPU. A 22.8 MB CSV (MedQuAD, 14,349 entries) makes ~25,000 child chunks, which is
+  ~9–10 min of embedding plus indexing. The backend waits `INGEST_TIMEOUT_MINUTES` (default 60)
+  for one ingest. If that runs out, the row is marked `failed` with a message saying so, and
+  the AI service may still finish in the background. Deleting the row clears whatever it
+  indexed.
 - Qdrant's `data/vectors/.lock` is advisory and **does not go stale**: the AI service was
   hard-killed and restarted successfully (verified 2026-11-21), so a crashed service needs no
   manual lock cleanup. The single-writer rule still holds for *concurrent* processes.
@@ -456,6 +462,7 @@ ADMIN_PASSWORD=change-me
 AI_SERVICE_URL=http://127.0.0.1:8001
 INTERNAL_API_KEY=change-me-shared-secret
 MAX_UPLOAD_MB=25
+INGEST_TIMEOUT_MINUTES=60
 CORS_ORIGINS=http://localhost:5173
 ```
 

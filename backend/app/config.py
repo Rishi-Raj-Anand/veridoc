@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     ai_service_url: str = "http://127.0.0.1:8001"
     internal_api_key: str = "change-me-shared-secret"
     max_upload_mb: int = 25
+    # How long the backend waits for one document to be indexed (§6.8: ~45 chunks/s with
+    # bge-m3 on the target GPU, so a 22 MB CSV of ~25,000 chunks needs about 10-12 minutes).
+    ingest_timeout_minutes: int = 60
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
 
     @field_validator("data_dir")
@@ -47,6 +50,13 @@ class Settings(BaseSettings):
         instead of silently creating a second data tree.
         """
         return value.expanduser().resolve()
+
+    @field_validator("ingest_timeout_minutes")
+    @classmethod
+    def _check_ingest_timeout(cls, value: int) -> int:
+        if not 1 <= value <= 1440:
+            raise ValueError("INGEST_TIMEOUT_MINUTES must be between 1 and 1440")
+        return value
 
     @field_validator("cors_origins", mode="before")
     @classmethod

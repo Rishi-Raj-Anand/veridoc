@@ -53,3 +53,20 @@ def test_no_insecure_defaults_once_configured() -> None:
         internal_api_key="a-real-key",
     )
     assert settings.insecure_defaults == []
+
+
+def test_ingest_timeout_defaults_to_an_hour_and_can_be_raised(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert Settings(_env_file=None).ingest_timeout_minutes == 60
+    monkeypatch.setenv("INGEST_TIMEOUT_MINUTES", "90")
+    assert Settings(_env_file=None).ingest_timeout_minutes == 90
+
+
+@pytest.mark.parametrize("minutes", ["0", "-5", "1441"])
+def test_an_unreasonable_ingest_timeout_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, minutes: str
+) -> None:
+    monkeypatch.setenv("INGEST_TIMEOUT_MINUTES", minutes)
+    with pytest.raises(ValueError, match="INGEST_TIMEOUT_MINUTES"):
+        Settings(_env_file=None)

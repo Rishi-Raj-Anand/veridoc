@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
+
+from app.schemas.types import UtcDatetime
 
 Role = Literal["user", "admin"]
 
@@ -41,4 +42,4 @@ class UserResponse(BaseModel):
     id: int
     email: str
     role: Role
-    created_at: datetime
+    created_at: UtcDatetime
