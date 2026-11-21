@@ -189,8 +189,7 @@ removed the file, the docstore parents (4 → 0) and the vectors (log: `points=1
 
 ### Next
 
-Run the gate with a real PDF, then Phase 3 (single-pass pipeline): `retriever.py` can read
-`VectorStore` / `Docstore.get_parents` directly, and `OllamaClient.chat` already exists.
+Phase 3 (single-pass pipeline). See the carry-forward notes in the close-out below.
 
 ## Close-out (2026-11-21)
 
@@ -214,6 +213,6 @@ final `main`, so the running AI service has the ingest routes, table chunking an
 |---|---|
 | 3.2 retriever | `VectorStore` has no search method yet: add `search(vector, limit)` returning score + payload (the `query_points` call used in the live checks is the template); `Docstore.get_parents` already preserves request order |
 | 3.3 generator | `OllamaClient.chat(messages, temperature=, format=)` exists and always sets `num_ctx`, `think=False`, `keep_alive` |
-| 4.4 / 4.8 | short factual queries can score below `MIN_RETRIEVAL_SCORE` 0.35 (\"what is the CGPA\" 0.276, vs 0.46-0.64 for fuller questions): calibrate on real questions |
+| 4.4 / 4.8 | short factual queries can score below `MIN_RETRIEVAL_SCORE` 0.35 ("what is the CGPA" 0.276, vs 0.46-0.64 for fuller questions): calibrate on real questions |
 | 6.5 admin page | the upload route returns `pending`; the UI must poll `GET /api/admin/documents`. Failed rows carry a user-safe `error` string |
 | known limits | no OCR (image-only PDFs are rejected by design); a heading separated from its table by another paragraph is not folded into the table chunks; backend restart marks stale `pending` rows `failed` |
