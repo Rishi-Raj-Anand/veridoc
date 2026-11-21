@@ -343,7 +343,7 @@ chat_sessions
 | POST | `/api/auth/register` | — | `{email, password}` → user |
 | POST | `/api/auth/login` | — | `{email, password}` → `{access_token, token_type, role}` |
 | GET | `/api/auth/me` | user | current user |
-| POST | `/api/chat/message` | user | `{session_id, message}` → `ChatResponse` |
+| POST | `/api/chat/message` | user | `{session_id, message}` → `ChatResponse`. `message` is 1–2000 characters. Any signed-in user may chat, the admin included. **401** anonymous, **403** a session owned by another user, **422** bad UUID / empty / over-long message, **503** (friendly text) when the AI service fails |
 | POST | `/api/admin/documents` | admin | multipart upload → document (status `pending`). Rejections: **415** wrong extension or content not matching it, **413** over `MAX_UPLOAD_MB`, **422** empty, **409** duplicate SHA-256 |
 | GET | `/api/admin/documents` | admin | list documents with status |
 | DELETE | `/api/admin/documents/{id}` | admin | delete file + vectors + row → 204. **409** while the document is `pending`; **503** (nothing removed) if the AI service cannot delete its index |
@@ -411,6 +411,7 @@ RELEVANCE_THRESHOLD=0.75
 MIN_RETRIEVAL_SCORE=0.35
 MAX_ITERATIONS=3
 HISTORY_MAX_MESSAGES=6
+TOP_K_PRECISION=3
 PARENT_CHUNK_TOKENS=800
 CHILD_CHUNK_TOKENS=300
 CHILD_CHUNK_OVERLAP_TOKENS=50
@@ -636,14 +637,28 @@ Build the AI side first (testable standalone), then wire the backend.
 
 ### Phase 3 — Single-pass pipeline (M4)
 
-- **3.1** `prompts/generator.md` — grounded-only, `[n]` citation on every claim, explicit "the documents don't cover this" path, §7.3 dosage caution.
-- **3.2** `retrieval/retriever.py` — iteration-1 Top-3 children, score gate on `MIN_RETRIEVAL_SCORE`, context assembly + `n → {filename, page}` source map.
-- **3.3** `agents/generator.py` (temperature 0.2).
-- **3.4** `graph/state.py` + `graph/pipeline.py` — LangGraph with `retrieve → generate → finalize` only.
-- **3.5** AI `POST /internal/chat` + backend `POST /api/chat/message` (records `(session_id, user_id)` on the first message, rejects another user's session), returning `ChatResponse`.
-- **3.6** End-to-end smoke test by HTTP against 1–2 real documents; sanity-check citation numbering.
+- ✅ **3.1** `prompts/generator.md` — grounded-only, `[n]` citation on every claim, explicit "the documents don't cover this" path, §7.3 dosage caution.
+- ✅ **3.2** `retrieval/retriever.py` — iteration-1 Top-3 children, score gate on `MIN_RETRIEVAL_SCORE`, context assembly + `n → {filename, page}` source map.
+- ✅ **3.3** `agents/generator.py` (temperature 0.2).
+- ✅ **3.4** `graph/state.py` + `graph/pipeline.py` — LangGraph with `retrieve → generate → finalize` only.
+- ✅ **3.5** AI `POST /internal/chat` + backend `POST /api/chat/message` (records `(session_id, user_id)` on the first message, rejects another user's session), returning `ChatResponse`.
+- ✅ **3.6** End-to-end smoke test by HTTP against 1–2 real documents; sanity-check citation numbering.
 
-**Gate:** a grounded, cited answer end to end with no frontend involved.
+**Gate: PASSED 2026-11-21.** A grounded, cited answer end to end with no frontend involved.
+
+**Status 2026-11-21:** 3.1–3.6 built; AI 126 tests, backend 148 tests, ruff clean. Live smoke on a
+throwaway `DATA_DIR` (ports 18000/18001, real `qwen3:8b` + `bge-m3`) with `disease.md` (8 chunks):
+malaria, tuberculosis and common-cold questions returned `verified` answers that match the source
+table row for row, each citing `[1]` = `disease.md` p. 1 (best scores 0.55 / 0.66 / 0.60; 9–16 s per turn
+including the model swap). "What is the capital of France?" scored 0.318, under the gate, so it fell
+back **without calling the LLM** (5.5 s); "How do I fix my car's brakes?" scored 0.409, passed the
+gate, and the Generator's `NOT_IN_DOCUMENTS` sentinel sent it to the exact fallback text. A second user
+reusing a session got 403, and a stopped AI service gave the friendly 503. `ollama ps`: `qwen3:8b`
+6.2 GB, 100% GPU at `num_ctx=8192`.
+
+**Interim until Phase 4:** there is no Verifier yet, so `status="verified"` means "passed the three
+code guards" (retrieval score gate, no `NOT_IN_DOCUMENTS`, at least one valid `[n]`), not an audited
+answer. Phase 4 puts `verify` and `escalate` between these nodes.
 
 ### Phase 4 — Verifier & escalation (M5)
 
@@ -700,6 +715,10 @@ After Phase 1 the seams are clean enough to work in parallel:
 - Freeze the shared contracts in Phase 0 so both tracks can mock the other: `ChatResponse` and the `/internal/ingest` + `/internal/chat` bodies (§9). Do not change them without telling the other track.
 
 ### Settled decisions
+
+- **Citation numbers are one per `(filename, page)`**: chunks from the same page share a number, assigned in best-score order, and `citations` lists only the numbers the answer uses. Markers that point at no source are stripped from the text.
+- **Phase 3 guards fall back instead of guessing:** no chunk reaching `MIN_RETRIEVAL_SCORE` (the LLM is not called), the `NOT_IN_DOCUMENTS` sentinel, or no valid `[n]` all return the §7.4 fallback.
+- **`VectorStore` serialises every Qdrant call with a lock, and chat turns run one at a time** (one model in VRAM, §6.8). The fallback and disclaimer text live as constants in `ai_service/config.py`.
 
 - **Ingest is idempotent per `doc_id`** and embeds everything *before* writing, so a failed embed leaves the previous index intact; a write failure rolls both stores back for that id.
 - **The AI service ingests only files inside `data/uploads/`** (anything else → 400), and serialises ingest/delete behind one lock.

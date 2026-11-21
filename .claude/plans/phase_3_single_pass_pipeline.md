@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Planned |
+| **Status** | ✅ **Complete — gate passed 2026-11-21** (on `feature/phase-3-single-pass`, not yet merged) |
 | **Branch** | `feature/phase-3-single-pass` |
 | **Tasks** | 3.0 – 3.6 |
 | **Gate** | A grounded, cited answer end to end over HTTP (`POST /api/chat/message`), no frontend |
@@ -165,3 +165,36 @@ Manual gate. Use spare ports 18000/18001 and a throwaway `DATA_DIR`, as in Phase
 - **Over-strict no-citation guard:** a correct but uncited answer becomes a fallback. That is acceptable (a safe failure); tune the prompt if the gate shows it often.
 - **Score gate on short queries:** "what is the CGPA" scored 0.276 in Phase 2, so short medical questions may fall back. Calibration belongs to 4.8; the gate results are noted for it.
 - **LangGraph 1.x API:** `StateGraph(PipelineState)`, `add_conditional_edges`, and `compile()` are used; check the installed version's signatures before coding.
+
+## Result (2026-11-21)
+
+**Tasks 3.1 – 3.6 built.** AI service 126 tests (+2 live behind `-m ollama`), backend 148 tests,
+`ruff check` and `ruff format --check` clean in both.
+
+**Live smoke** (both services on spare ports 18000/18001, throwaway `DATA_DIR`, real `qwen3:8b` + `bge-m3`,
+`disease.md` → 8 chunks):
+
+| Question | Best score | Outcome | Latency |
+|---|---|---|---|
+| How is malaria prevented? | 0.546 | `verified`, `[1]` = disease.md p. 1, matches the Prevention cell | 9.1 s |
+| How is tuberculosis treated? | 0.664 | `verified`, 6-month isoniazid/rifampicin regimen from the row | 13.3 s |
+| Treatment for the common cold? | 0.600 | `verified`, rest/fluids/OTC, "no specific cure", 7–10 days | 16.5 s |
+| What is the capital of France? | 0.318 | **gate FAIL → exact fallback, no LLM call** | 5.5 s |
+| How do I fix my car's brakes? | 0.409 | gate pass, Generator said `NOT_IN_DOCUMENTS` → exact fallback | 10.4 s |
+
+Another user reusing a session → 403; AI service stopped → 503 "Doctor AI is unavailable right now…".
+`ollama ps`: `qwen3:8b` 6.2 GB, 100% GPU, 8192 context.
+
+**For 4.8:** the threshold is clearly doing work: the off-corpus France question sat 0.03 under the gate,
+and the brakes question (0.409) shows an off-topic query can still pass it, so the sentinel guard
+and the Verifier both matter. Latency was 5–16 s per turn here (cold swap included), well inside the
+§6.8 budget for a single iteration.
+
+### Deviations from the plan
+| Planned | Actual | Why |
+|---|---|---|
+| smoke users `@smoke.test` | `@example.com` | `email-validator` rejects special-use domains (documented in §3); a smoke-script slip, not a code issue |
+
+### Next
+Phase 4 (Verifier & escalation). The running developer AI service on `:8001` predates this phase and needs a
+restart (no `--reload`) to expose `/internal/chat`.
