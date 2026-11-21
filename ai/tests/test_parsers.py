@@ -156,3 +156,10 @@ def test_suffix_match_is_case_insensitive(tmp_path: Path) -> None:
 
 def test_normalise_text_collapses_runs_but_keeps_paragraphs() -> None:
     assert normalise_text("a   b\t c\n\n\n\nd  e") == "a b c\n\nd e"  # noqa: RUF001
+
+
+def test_normalise_text_strips_invisible_characters_but_keeps_joiners() -> None:
+    zwsp, bom, word_joiner = chr(0x200B), chr(0xFEFF), chr(0x2060)
+    zwj = chr(0x200D)
+    assert normalise_text(f"EDU{zwsp}CATION{bom} {word_joiner}ok") == "EDUCATION ok"
+    assert normalise_text(f"a{zwj}b") == f"a{zwj}b"

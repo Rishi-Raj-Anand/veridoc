@@ -26,6 +26,11 @@ NO_TEXT_MESSAGE = "document contains no extractable text"
 _MD_HEADING = re.compile(r"^#{1,2}\s+\S")
 _DOCX_HEADING_STYLES = frozenset({"heading 1", "heading 2", "title"})
 
+# Invisible characters (zero-width space, word joiner, BOM) that word processors such as
+# Google Docs scatter through exported text. They only add noise to embeddings. ZWJ/ZWNJ are
+# deliberately kept: they carry meaning in some scripts.
+_INVISIBLE = dict.fromkeys((0x200B, 0x2060, 0xFEFF))
+
 
 class ParseError(ValueError):
     """The file cannot be turned into text. The message is safe to show the admin."""
@@ -39,6 +44,7 @@ class PageText:
 
 def normalise_text(text: str) -> str:
     """Collapse whitespace runs but keep blank-line paragraph breaks."""
+    text = text.translate(_INVISIBLE)
     text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\x00", "")
     lines = [re.sub(r"[^\S\n]+", " ", line).strip() for line in text.split("\n")]
     joined = "\n".join(lines)
