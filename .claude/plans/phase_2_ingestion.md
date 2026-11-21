@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Status** | ✅ **Complete — gate passed and merged to `main` 2026-11-21** |
-| **Branch** | `feature/phase-2-ingestion` (merged, then deleted) |
-| **Commits** | `075be7c` · `a1e73ac` · `1b7a155` · `c82547d` · `ce4d93c` · `7f9c01e` · `afe0b6e` · `ac8e29e` · `bb3c35d`, merged as `f225f00` |
+| **Branch** | `feature/phase-2-ingestion` and `fix/strip-zero-width-chars` (both merged, then deleted) |
+| **Commits** | `075be7c` · `a1e73ac` · `1b7a155` · `c82547d` · `ce4d93c` · `7f9c01e` · `afe0b6e` · `ac8e29e` · `bb3c35d`, merged as `f225f00`; later fix `e0348e4`, merged as `0f1f0b8` |
 | **Tasks** | 2.1 – 2.10 (AI side first, then backend) |
 | **Gate** | A real PDF uploaded via `/api/admin/documents` flips to `ready` with a sane `chunk_count`; delete removes its Qdrant points and docstore parents |
 | **Touches** | `ai/` and `backend/` — no frontend, no LLM generation |
@@ -191,3 +191,29 @@ removed the file, the docstore parents (4 → 0) and the vectors (log: `points=1
 
 Run the gate with a real PDF, then Phase 3 (single-pass pipeline): `retriever.py` can read
 `VectorStore` / `Docstore.get_parents` directly, and `OllamaClient.chat` already exists.
+
+## Close-out (2026-11-21)
+
+**Final state of `main`:** merge `0f1f0b8`. AI service 88 tests (+1 live behind `-m ollama`), backend 128 tests,
+`ruff check` and `ruff format --check` clean in both. Only `main` remains: no other branches, no stashes, no remotes.
+
+**Order of events after the first gate pass:** the WHO malaria PDF was rejected (print-to-PDF, no text layer) → the gate
+passed on `disease.md` → row-aware table chunking (`bb3c35d`) → merged `f225f00` → a real text-layer PDF passed → the
+zero-width-space fix (`e0348e4`) → merged `0f1f0b8`.
+
+**Clean-up performed:** throwaway `DATA_DIR`s, driver scripts and logs from the live runs were removed from the scratch
+area; no stray files were left in the repo (`git status` clean); the developer's real `data/` and `documents/` were not
+touched. `documents/` is now in `.gitignore` (`afe0b6e`).
+
+**Servers:** backend `:8000` (`--reload`), AI service `:8001` (no `--reload`) and frontend `:5173` were restarted on the
+final `main`, so the running AI service has the ingest routes, table chunking and the zero-width fix.
+
+**Carry-forward notes for later phases**
+
+| For | Note |
+|---|---|
+| 3.2 retriever | `VectorStore` has no search method yet: add `search(vector, limit)` returning score + payload (the `query_points` call used in the live checks is the template); `Docstore.get_parents` already preserves request order |
+| 3.3 generator | `OllamaClient.chat(messages, temperature=, format=)` exists and always sets `num_ctx`, `think=False`, `keep_alive` |
+| 4.4 / 4.8 | short factual queries can score below `MIN_RETRIEVAL_SCORE` 0.35 (\"what is the CGPA\" 0.276, vs 0.46-0.64 for fuller questions): calibrate on real questions |
+| 6.5 admin page | the upload route returns `pending`; the UI must poll `GET /api/admin/documents`. Failed rows carry a user-safe `error` string |
+| known limits | no OCR (image-only PDFs are rejected by design); a heading separated from its table by another paragraph is not folded into the table chunks; backend restart marks stale `pending` rows `failed` |
