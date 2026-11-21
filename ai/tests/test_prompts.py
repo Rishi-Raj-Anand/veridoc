@@ -24,6 +24,13 @@ def test_generator_prompt_carries_the_contract() -> None:
     assert "pharmacist" in prompt
 
 
+def test_verifier_prompt_names_every_schema_field() -> None:
+    prompt = load_prompt("verifier")
+
+    for field in ("faithfulness", "relevance", "unsupported_claims", "missing_info", "verdict"):
+        assert f'"{field}"' in prompt
+
+
 def test_missing_prompt_raises() -> None:
     with pytest.raises(FileNotFoundError):
         load_prompt("does-not-exist")

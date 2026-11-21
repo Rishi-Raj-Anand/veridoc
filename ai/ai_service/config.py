@@ -48,12 +48,27 @@ class Settings(BaseSettings):
     max_iterations: int = 3
     history_max_messages: int = 6
     top_k_precision: int = 3  # iteration-1 retrieval (§6.3)
+    top_k_level2: int = 8  # iteration-2 expansion: children fetched, then widened to parents
+    max_parents_level2: int = 4
+    top_k_level3: int = 15  # iteration-3 expansion
+    max_parents_level3: int = 6
+    # Prompt budget (§6.4); the system prompt is never trimmed.
+    context_max_tokens: int = 4800
+    history_max_tokens: int = 1500
     # Chunking and embedding shape (§6.1). Changing any of these means re-ingesting
     # every document: existing vectors and parents were built with the old values.
     parent_chunk_tokens: int = 800
     child_chunk_tokens: int = 300
     child_chunk_overlap_tokens: int = 50
     embed_dim: int = 1024
+
+    @field_validator("max_iterations")
+    @classmethod
+    def _cap_iterations(cls, value: int) -> int:
+        """§6.3 defines exactly three escalation levels, so the cap is 1..3."""
+        if not 1 <= value <= 3:
+            raise ValueError("MAX_ITERATIONS must be between 1 and 3 (CLAUDE.md §6.3)")
+        return value
 
     @field_validator("data_dir")
     @classmethod

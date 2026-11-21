@@ -151,6 +151,11 @@ class OllamaClient:
                 format=format,
             ),
         )
+        logger.info(
+            "ollama chat prompt_tokens=%s completion_tokens=%s",
+            getattr(response, "prompt_eval_count", None),
+            getattr(response, "eval_count", None),
+        )
         return response.message.content or ""
 
     def list_models(self) -> set[str]:
