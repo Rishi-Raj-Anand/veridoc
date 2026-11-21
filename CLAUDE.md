@@ -732,9 +732,9 @@ reusing a session got 403, and a stopped AI service gave the friendly 503. `olla
   - A flatlining EKG, "Diagnosis: Acute Page-Not-Found-itis" and a mock failed Verifier audit.
   - Links home and to Doctor AI.
   - The jokes never touch real emergencies.
-- **6.9** Live gate in a browser against all three services, then record the results here.
+- ✅ **6.9** Live gate in a browser against all three services; results below.
 
-**Gate:** checked in a browser against real services:
+**Gate: PASSED 2026-11-21.** Checked in a real browser (headless Chrome driven by Playwright) against a throwaway stack with the real `qwen3:8b` and `bge-m3`:
 - The landing CTA leads to login, then `/chat`.
 - Registering logs the new user in automatically.
 - An in-corpus question returns a cited `verified` answer with the disclaimer.
@@ -747,7 +747,20 @@ reusing a session got 403, and a stopped AI service gave the friendly 503. `olla
 
 Plan and results: `.claude/plans/phase_6_frontend.md`.
 
-**Status 2026-11-21:** 6.1–6.8 built; frontend 28 tests (6 files), ESLint, `tsc`, Prettier and `vite build` clean. Backend and AI service are untouched. Read-only checks against the running services confirmed the contracts the UI relies on: Vite compiles every page, CORS allows the 5173 origin with `authorization`, a wrong password is a 401 with `"incorrect email or password"`, a short password is a list-form 422, and chat and admin routes return 401 without a token. **6.9, the browser walkthrough, is still open:** it writes to the real `data/` (registers a user, uploads and deletes a document), so it needs to be run deliberately.
+**Status 2026-11-21:** 6.1–6.9 done. Frontend: 28 tests (5 files), ESLint, `tsc`, Prettier and `vite build` clean; backend and AI service untouched.
+
+Browser walkthrough: Playwright (installed outside the repo, not a project dependency) drove headless Chrome against a throwaway `DATA_DIR` on ports 18000/18001/15173, so the real `data/` was never written. Results with a 3-row fixture document:
+
+| Step | Result |
+|---|---|
+| Landing, register, guards | `/` → `/home`; the CTA goes to `/login` when signed out; register auto-logs in and lands on `/chat`; a user on `/admin` goes to `/chat` with no Admin link; logout then `/chat` goes to `/login`; refresh gives an empty conversation and stays signed in |
+| Admin | upload `pending` → `ready` (the pending badge was seen), status card shows all services up, confirmed delete empties the list |
+| In-corpus question | verified answer with the grounded symptoms, `[1] testdoc.md · p. 1`, the API disclaimer, no scores shown; 10 s |
+| Red-flag message | red banner with the notice shown exactly once, above the fallback text (the fixture has nothing on chest pain); 19 s |
+| Off-corpus question | exact fallback text, no citations, no emergency notice; 9 s |
+| 404 and phone width | case-file page renders; home, 404 and login have no horizontal overflow at 390 px |
+
+Two things the run turned up: a missing favicon made every page load log a 404 (fixed with `public/favicon.svg`), and two walkthrough checks were wrong in the script rather than in the app (a visibility call that does not wait, and a fallback check that matched text already on screen, which was rerun on a fresh session and passed).
 
 ### Phase 7 — Evaluation (M8)
 

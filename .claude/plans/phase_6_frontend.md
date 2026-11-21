@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 **6.1–6.8 built 2026-11-21; 6.9 browser walkthrough still open** |
+| **Status** | ✅ **Complete 2026-11-21 — gate passed, on `feature/phase-6-frontend`, not yet merged** |
 | **Branch** | `feature/phase-6-frontend` (created from `main` at `f982b8d`) |
 | **Tasks** | 6.0 housekeeping, 6.1–6.6 as listed in §17, **6.7 `/home` landing page**, **6.8 funny 404 page**, 6.9 live gate |
 | **Touches** | `frontend/` and `CLAUDE.md` (§5, §10, §17). Backend and AI service are unchanged, and the §9 contracts are not modified |
@@ -203,7 +203,7 @@ A medical "case file" for a missing page:
 
 **Built (commit `d037ff8`):** 6.1–6.8. Frontend only; `backend/` and `ai/` unchanged, no new dependencies.
 
-**Automated checks:** 28 frontend tests in 6 files pass (client, routing, login/register, chat, admin). ESLint, `tsc --noEmit`, `prettier --check` and `vite build` are clean (442 kB JS, 137 kB gzip).
+**Automated checks:** 28 frontend tests in 5 files pass (client, routing, login/register, chat, admin). ESLint, `tsc --noEmit`, `prettier --check` and `vite build` are clean (442 kB JS, 137 kB gzip).
 
 **Read-only checks against the running services** (Vite 5173, backend 8000, AI 8001, Ollama up, real `data/`):
 - Vite compiled `main.tsx` and the Home, NotFound, Chat and Admin pages (200).
@@ -213,17 +213,28 @@ A medical "case file" for a missing page:
 - A short password returned a list-form 422, the shape `errorDetail` joins into readable text.
 - Chat and admin routes without a token returned 401.
 
-**Not done: 6.9 browser walkthrough.** It has to be driven in a real browser, and it writes to the real `data/`: a registered user, an uploaded and deleted document, and chat transcripts. Checklist for the person running it:
-1. `/` lands on `/home`. "Try out AI Doctor" goes to login, then `/chat`.
-2. Register logs in automatically.
-3. An in-corpus question gives a cited answer with the disclaimer.
-4. A red-flag message ("I have chest pain") shows the red banner, once.
-5. An off-corpus question shows the fallback.
-6. Admin: upload goes `pending` → `ready`, then delete with confirmation.
-7. A normal user opening `/admin` lands on `/chat`.
-8. Refresh starts a new session.
-9. An unknown URL shows the 404 page.
-10. Check the landing page and 404 at phone width.
+**6.9 browser walkthrough: passed.** Headless Chrome driven by Playwright (installed in a scratch directory, not in the repo) against a throwaway stack: backend 18000, AI service 18001, Vite 15173, a fresh `DATA_DIR`, and the real `qwen3:8b` and `bge-m3`. Your running services and real `data/` were not touched. The stack was stopped afterwards.
+
+| Checklist step | Result |
+|---|---|
+| 1. `/` → `/home`, hero "VERIDOC AI", CTA when signed out → `/login` | pass |
+| 2. Register → auto-login → `/chat`, email in header, disclaimer visible before any message | pass |
+| 3. In-corpus question | pass: grounded symptoms, `[1] testdoc.md · p. 1`, API disclaimer, no scores or iteration counts; "Thinking" shown; 10 s |
+| 4. Red-flag message | pass: red banner, notice shown once, fallback text under it; 19 s |
+| 5. Off-corpus question | pass on a fresh session: exact fallback, no citations, no emergency notice; 9 s |
+| 6. Admin upload `pending` → `ready`, status card, confirmed delete | pass |
+| 7. User on `/admin` → `/chat`, no Admin link | pass |
+| 8. Refresh | pass: conversation gone, still signed in |
+| 9. Unknown URL | pass: 404 case file, patient is the URL |
+| 10. Phone width (390 px) | pass: home, 404 and login have no horizontal overflow |
+
+**Corrections during the run.** The first run reported 27/28:
+- The failing check (email in the header) was a script flaw: the screenshot shows the email, and a later check on the same element passed.
+- Step 5 had matched fallback text left on screen from step 4, so it was rerun on a fresh session, where it passed. The first run's screenshot showed "Thinking…".
+- One console 404 per page load was the missing favicon, now fixed.
+
+**Not covered:** visual quality at phone width was only checked for horizontal overflow, and only Chrome was used. The screenshots were reviewed by eye for the landing page, the 404 and the chat; the phone screenshots were not.
 
 ## Deviations from the plan
-- None to scope. The planned `test/fetchMock.ts` became `test/helpers.tsx`, which also holds `renderApp`.
+- Added `public/favicon.svg` and its `<link>` in `index.html` (not planned): the walkthrough showed every page load requesting a missing favicon.
+- The planned `test/fetchMock.ts` became `test/helpers.tsx`, which also holds `renderApp`.
