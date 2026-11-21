@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| **Status** | ✅ **Complete 2026-11-21 — gate passed, on `feature/phase-6-frontend`, not yet merged** |
-| **Branch** | `feature/phase-6-frontend` (created from `main` at `f982b8d`) |
+| **Status** | ✅ **Complete — gate passed and merged to `main` 2026-11-21** (merge `77ab0f7`) |
+| **Branch** | `feature/phase-6-frontend` (created from `main` at `f982b8d`, merged, then deleted) |
 | **Tasks** | 6.0 housekeeping, 6.1–6.6 as listed in §17, **6.7 `/home` landing page**, **6.8 funny 404 page**, 6.9 live gate |
 | **Touches** | `frontend/` and `CLAUDE.md` (§5, §10, §17). Backend and AI service are unchanged, and the §9 contracts are not modified |
 | **New deps** | **None.** `react-markdown`, `react-router` and TanStack Query are already installed. Tests use `fireEvent` and do not add `user-event` or `jest-dom` |
