@@ -142,7 +142,7 @@ veridoc/
 │   └── src/
 │       ├── api/               # ALL fetch calls + response types live here
 │       ├── components/
-│       ├── pages/             # LoginPage, RegisterPage, ChatPage, AdminPage
+│       ├── pages/             # HomePage, LoginPage, RegisterPage, ChatPage, AdminPage, NotFoundPage
 │       ├── hooks/
 │       ├── context/           # AuthContext
 │       └── main.tsx
@@ -381,10 +381,20 @@ Errors use FastAPI's standard `{"detail": "..."}` with proper status codes. The 
 
 ## 10. Frontend
 
-- Pages: `/login`, `/register`, `/chat` (user), `/admin` (admin only — upload, list with status, delete). Route guards by role.
+- Pages:
+  - `/home`: public landing page with a "VERIDOC AI" hero, a how-it-works section and a **"Try out AI Doctor"** link to `/chat`. `/` redirects here.
+  - `/login` and `/register`.
+  - `/chat`: any signed-in user, the admin included.
+  - `/admin`: admin only. It has a system status card, upload, the document list with status, and delete.
+  - A custom, light-hearted **404 page** for every unknown path.
+- Route guards by role: a signed-out visitor goes to `/login` and comes back afterwards, and a user who opens `/admin` goes to `/chat`.
+- The landing and 404 pages are standalone full-bleed layouts. The other pages share one app header with the logo, Chat, Admin (admin only), the user's email and Log out.
 - JWT stored in `localStorage` for v1 (known trade-off; revisit before any public deployment).
 - All HTTP calls live in `src/api/`; components never call `fetch` directly. Types for every request/response.
 - Chat UI: message list, input box, "Thinking…" indicator while waiting, citation list under each answer, red emergency banner when `emergency=true`, persistent disclaimer banner.
+- The emergency banner shows the answer's first paragraph, which is the notice the AI service prefixes, so the notice text is never duplicated in the frontend.
+- The persistent disclaimer banner must render before the first reply, so its text is one constant in `src/constants.ts` that mirrors `ai_service/config.py`. Each answer still shows the API's `disclaimer`.
+- No external fonts, CDNs or analytics: use the system font stack and inline SVG only.
 - Render answers as Markdown with a sanitizing renderer (`react-markdown`, no raw HTML).
 - No history sidebar. Refreshing the page starts a new session.
 
@@ -715,6 +725,27 @@ reusing a session got 403, and a stopped AI service gave the friendly 503. `olla
 - **6.4** `ChatPage` — `session_id = crypto.randomUUID()` in React state only, message list, "Thinking…" indicator, `react-markdown` (no raw HTML), citation list under each answer, red emergency banner when `emergency=true`, persistent disclaimer banner.
 - **6.5** `AdminPage` — upload, document table with status (poll via TanStack Query while any row is `pending`), delete with confirmation, `error` text shown for `failed` rows.
 - **6.6** `npm run lint ; npm run typecheck ; npm run test` green.
+- **6.7** `HomePage` at `/home`, the public landing page; `/` redirects here.
+  - A "VERIDOC AI" hero with a **"Try out AI Doctor"** link to `/chat` (signed-out visitors log in first).
+  - How-it-works steps, feature cards, the disclaimer and the project credits.
+- **6.8** `NotFoundPage` for `*`: a funny medical "case file".
+  - A flatlining EKG, "Diagnosis: Acute Page-Not-Found-itis" and a mock failed Verifier audit.
+  - Links home and to Doctor AI.
+  - The jokes never touch real emergencies.
+- **6.9** Live gate in a browser against all three services, then record the results here.
+
+**Gate:** checked in a browser against real services:
+- The landing CTA leads to login, then `/chat`.
+- Registering logs the new user in automatically.
+- An in-corpus question returns a cited `verified` answer with the disclaimer.
+- A red-flag message shows the red banner.
+- An off-corpus question shows the fallback.
+- The admin uploads a document (`pending` → `ready`) and deletes it.
+- A user cannot reach `/admin`.
+- Refreshing starts a new session.
+- An unknown URL shows the 404 page.
+
+Plan and results: `.claude/plans/phase_6_frontend.md`.
 
 ### Phase 7 — Evaluation (M8)
 
