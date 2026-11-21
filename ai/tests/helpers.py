@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import httpx
@@ -10,6 +11,7 @@ from fastapi import FastAPI
 from qdrant_client import QdrantClient
 
 from ai_service.agents.generator import Generator
+from ai_service.agents.verifier import Verifier
 from ai_service.config import get_settings
 from ai_service.graph.pipeline import build_pipeline
 from ai_service.llm import ollama_client
@@ -65,25 +67,64 @@ class FakeEmbedder:
         return [[float(len(text) % 7 + 1)] + [0.0] * 1023 for text in texts]
 
 
+def verifier_json(
+    faithfulness: float = 1.0,
+    relevance: float = 1.0,
+    unsupported: list[str] | None = None,
+    missing: str | None = None,
+    verdict: str = "pass",
+) -> str:
+    """A Verifier reply in the §6.5 shape (passing by default)."""
+    return json.dumps(
+        {
+            "faithfulness": faithfulness,
+            "relevance": relevance,
+            "unsupported_claims": unsupported or [],
+            "missing_info": missing,
+            "verdict": verdict,
+        }
+    )
+
+
 class FakeLlm(FakeEmbedder):
-    """Scripted ``OllamaClient``: ``embed`` returns ``query_vector``, ``chat`` returns ``reply``."""
+    """Scripted ``OllamaClient``.
+
+    ``embed`` returns ``query_vector``. ``chat`` is a Generator call unless ``format`` is set
+    (the Verifier). Each side replays its script in order and repeats the last entry once it
+    runs out. ``events`` records the call order (``embed`` / ``chat:gen`` / ``chat:verify``).
+    """
 
     def __init__(
         self,
         *,
         query_vector: list[float] | None = None,
         reply: str = "",
+        replies: list[str] | None = None,
+        verifier_replies: list[str] | None = None,
         embed_fails: bool = False,
         chat_fails: bool = False,
     ) -> None:
         super().__init__(fails=embed_fails)
         self.query_vector = query_vector or [1.0] + [0.0] * 1023
-        self.reply = reply
+        self._gen_replies = replies if replies is not None else [reply]
+        self._verifier_replies = (
+            verifier_replies if verifier_replies is not None else [verifier_json()]
+        )
         self.chat_fails = chat_fails
         self.chat_calls: list[dict[str, Any]] = []
+        self.events: list[str] = []
+
+    @property
+    def generator_calls(self) -> list[dict[str, Any]]:
+        return [c for c in self.chat_calls if c["format"] is None]
+
+    @property
+    def verifier_calls(self) -> list[dict[str, Any]]:
+        return [c for c in self.chat_calls if c["format"] is not None]
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         self.calls.append(list(texts))
+        self.events.append("embed")
         if self.fails:
             raise OllamaError("cannot reach Ollama at http://127.0.0.1:11434 - is it running?")
         return [list(self.query_vector) for _ in texts]
@@ -95,10 +136,16 @@ class FakeLlm(FakeEmbedder):
         temperature: float,
         format: dict[str, Any] | None = None,
     ) -> str:
-        self.chat_calls.append({"messages": messages, "temperature": temperature})
+        script, kind = (
+            (self._verifier_replies, "verify") if format is not None else (self._gen_replies, "gen")
+        )
+        call = {"messages": messages, "temperature": temperature, "format": format}
+        self.chat_calls.append(call)
+        self.events.append(f"chat:{kind}")
         if self.chat_fails:
             raise OllamaError("cannot reach Ollama at http://127.0.0.1:11434 - is it running?")
-        return self.reply
+        index = len([c for c in self.chat_calls if (c["format"] is not None) == (kind == "verify")])
+        return script[min(index, len(script)) - 1]
 
 
 def build_app(
@@ -128,7 +175,10 @@ def build_app(
     app.state.docstore = Docstore(settings.docstore_path)
     app.state.llm = llm or FakeEmbedder()
     app.state.pipeline = build_pipeline(
-        Retriever(store, app.state.llm, settings), Generator(app.state.llm, settings)
+        Retriever(store, app.state.docstore, app.state.llm, settings),
+        Generator(app.state.llm, settings),
+        Verifier(app.state.llm, settings),
+        settings,
     )
     return app
 

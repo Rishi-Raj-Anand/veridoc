@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from qdrant_client import QdrantClient
 
 from ai_service.agents.generator import Generator
+from ai_service.agents.verifier import Verifier
 from ai_service.config import DEFAULT_INTERNAL_KEY, Settings, get_settings
 from ai_service.graph.pipeline import build_pipeline
 from ai_service.llm.ollama_client import OllamaClient
@@ -85,12 +86,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await asyncio.to_thread(client.close)
         raise
     app.state.vector_store = store
-    app.state.docstore = Docstore(settings.docstore_path)
+    docstore = Docstore(settings.docstore_path)
+    app.state.docstore = docstore
     llm = OllamaClient(settings)
     app.state.llm = llm
     try:
-        generator = Generator(llm, settings)  # loads prompts/generator.md; fails loudly if absent
-        app.state.pipeline = build_pipeline(Retriever(store, llm, settings), generator)
+        # Both load their prompt file now and fail loudly if it is absent.
+        generator = Generator(llm, settings)
+        verifier = Verifier(llm, settings)
+        app.state.pipeline = build_pipeline(
+            Retriever(store, docstore, llm, settings), generator, verifier, settings
+        )
     except Exception:
         await asyncio.to_thread(client.close)
         raise

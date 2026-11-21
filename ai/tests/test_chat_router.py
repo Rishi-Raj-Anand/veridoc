@@ -6,7 +6,7 @@ import pytest
 
 from ai_service.config import DISCLAIMER, FALLBACK_MESSAGE
 from ai_service.ingestion.chunker import ChildChunk
-from tests.helpers import FakeLlm, build_app, internal_client
+from tests.helpers import FakeLlm, build_app, internal_client, verifier_json
 
 SESSION = "22222222-2222-4222-8222-222222222222"
 VECTOR = [1.0] + [0.0] * 1023
@@ -55,6 +55,29 @@ async def test_an_ungrounded_turn_returns_the_fixed_fallback(
         [],
     )
     assert payload["disclaimer"] == DISCLAIMER
+
+
+async def test_a_draft_the_verifier_keeps_rejecting_returns_the_fallback_over_http(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    llm = FakeLlm(
+        query_vector=VECTOR,
+        reply="Use bed nets [1].",
+        verifier_replies=[verifier_json(faithfulness=0.2, verdict="fail", unsupported=["x"])],
+    )
+    app = seeded_app(monkeypatch, llm)
+
+    async with internal_client(app) as client:
+        response = await client.post("/internal/chat", json=body())
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert (payload["status"], payload["answer"], payload["citations"]) == (
+        "fallback",
+        FALLBACK_MESSAGE,
+        [],
+    )
+    assert len(llm.verifier_calls) == 3  # three audits, then the fixed text, never a draft
 
 
 async def test_missing_internal_key_is_401(monkeypatch: pytest.MonkeyPatch) -> None:
