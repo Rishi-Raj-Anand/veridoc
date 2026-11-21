@@ -1,0 +1,28 @@
+# --- runtime data (never commit: contains uploads, vectors, chats, db) ---
+data/
+
+# --- secrets ---
+.env
+.env.*
+!.env.example
+
+# --- Python ---
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- Node / frontend ---
+node_modules/
+dist/
+dist-ssr/
+.vite/
+
+# --- misc ---
+*.log
+.DS_Store
+Thumbs.db
