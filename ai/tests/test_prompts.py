@@ -42,3 +42,12 @@ def test_condense_prompt_forbids_answering_and_demands_one_question() -> None:
     assert "standalone" in prompt
     assert "do not answer" in prompt or "never answer" in prompt
     assert "unchanged" in prompt
+
+
+def test_condense_prompt_tells_subjectless_follow_ups_to_inherit_the_subject() -> None:
+    """Live finding (5.7): 'what should I do now?' stayed unchanged without this rule, so an
+    emergency in the earlier turn was never seen by the safety check."""
+    prompt = load_prompt("condense").lower()
+
+    assert "what should i do now?" in prompt
+    assert "names no medical subject" in prompt

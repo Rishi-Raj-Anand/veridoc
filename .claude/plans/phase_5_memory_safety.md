@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Status** | ✅ **Built; gate passed 2026-11-21** (not yet merged to `main`) |
 | **Branch** | `feature/phase-5-memory-safety` |
 | **Tasks** | 5.0 – 5.7 (5.0 housekeeping, 5.7 live gate) |
 | **Gate (new, added to §17)** | A two-turn conversation over HTTP: the follow-up is condensed into a standalone question and answered `verified`. A red-flag message comes back with `emergency=true` and the §7.2 notice prefixed. The transcript on disk holds both exchanges with scores |
@@ -163,3 +164,34 @@ Then the 5.7 live gate. Afterwards, restart the real AI service on `:8001`, sinc
 - **Emergency false positives:** keyword matching flags "no chest pain" and topic follow-ups. This is accepted as safety-first, and the notice is advisory text, not a refusal.
 - **Extra latency on follow-ups:** one condense call (~1–3 s warm). The LLM is already resident from the previous turn's verify, so no extra swap is added.
 - **Windows file locking** on `os.replace` is handled by the short retry. If a save still fails, the turn still answers.
+
+## Result (2026-11-21)
+
+**Tasks 5.1 – 5.6 built.** AI service 340 tests (+5 live behind `-m ollama`, all passing against real Ollama), backend 148 tests, `ruff check` and `ruff format --check` clean in both. No backend or frontend changes; the §9 `ChatResponse` body is unchanged. Commits: `ffb85a4` plan, `ad3e492` transcript store, `4018a96` safety check, `5c9674a` condenser + pipeline wiring, then the docs commit.
+
+**Live gate** (real `qwen3:8b` + `bge-m3`, throwaway `DATA_DIR`, AI service on :18001, `disease.md` + a synthetic 3-section migraine document):
+
+| Turn | Result | Latency |
+|---|---|---|
+| "What is the treatment for migraine?" | `verified`, cites `migraine.md` | 10 s |
+| "what about for children?" | standalone = "What is the treatment for migraine in children?", `verified`, answer from the children section | 15 s |
+| "How is malaria treated?" then "how can I prevent it?" | standalone = "How can I prevent malaria?", `verified` | 15 s each |
+| Chest pain + "can't breathe" | `emergency=true` (`chest_pain`, `breathing`), notice prefixed; `verified` on one run, `fallback` (3× uncited) on another | 16-18 s |
+| "what should I do now?" (after it) | **first run: not flagged** (see below); after the prompt fix: `emergency=true`, `fallback` | 17 s / 32 s |
+| Same session, a different `user_id` | 403, no LLM call | instant |
+
+Transcripts on disk held every exchange with `standalone_query`, `emergency`, `iterations` and per-attempt scores. A follow-up turn costs one extra condense call and no extra model swap (11-16 s warm).
+
+### Live findings
+| Finding | Action |
+|---|---|
+| **The condenser left "what should I do now?" unchanged** (it judged it already standalone), so the standalone scan could not see the earlier chest pain, and the answer was off-topic (migraine and cold advice) | Fixed in `prompts/condense.md`: a message that names no subject inherits the conversation's subject, with this exact case as the example. Re-probed live: "what should I do now?" → "What should I do for crushing chest pain and difficulty breathing?"; topic switches ("How is malaria prevented?" after migraine) are left alone. A prompt test pins the rule |
+| **The Verifier passed that off-topic answer at faithfulness 1.00 / relevance 1.00.** Not a Phase 5 regression: with no subject, retrieval returned unrelated chunks, and the 8B judge did not penalise an answer that ignores the question | **Open.** The condenser fix removes this trigger, but the Verifier's leniency on vague questions is a weakness to look at in Phase 7 (RAGAS) or 8 |
+| One chest-pain run was `verified` with an answer that mixed a cited asthma line with an uncited "could indicate a heart attack" sentence, both passing the audit | **Open.** Same Verifier-strictness question; the notice was present either way |
+
+### Carry-forward notes
+| For | Note |
+|---|---|
+| Phase 6 | `emergency` and the notice text are in the response; the banner should key off `emergency`, and may avoid repeating the notice text if it is already the first line of `answer` |
+| Phase 7 | `run_turn(..., store=None)` gives the stateless pipeline run the eval needs |
+| running services | The AI service on `:8001` runs without `--reload`: **restart it** to pick up Phase 5. It was not touched here |
