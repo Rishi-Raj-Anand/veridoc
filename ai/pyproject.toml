@@ -1,0 +1,49 @@
+[project]
+name = "veridoc-ai"
+version = "0.1.0"
+description = "VeriDoc AI service: ingestion, retrieval, LangGraph agents, evaluation"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi==0.165.0",
+    "uvicorn[standard]==0.54.0",
+    "pydantic==2.14.4",
+    "pydantic-settings==2.16.3",
+    "httpx==0.28.1",
+    "ollama==0.6.3",
+    "qdrant-client==1.20.0",
+    "pymupdf==2.1",
+    "python-docx==1.2.0",
+    "pyyaml==6.0.4",
+    "langgraph==1.2.24",
+]
+
+[dependency-groups]
+dev = [
+    "ruff==0.17.6",
+    "pytest==9.2.0",
+    "pytest-asyncio==1.5.0",
+]
+# RAGAS pulls in langchain and datasets and is only needed for task 7.2, so it is
+# kept out of the default sync. Install with:  uv sync --group eval
+eval = [
+    "ragas==0.4.4",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC", "C4", "RUF"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+    "ollama: needs a live Ollama with the models pulled (deselected by default)",
+]
+addopts = "-m 'not ollama'"
