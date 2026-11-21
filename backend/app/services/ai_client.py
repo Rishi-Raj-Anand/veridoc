@@ -13,6 +13,7 @@ import httpx
 from pydantic import ValidationError
 
 from app.config import Settings
+from app.schemas.behaviour import BehaviourResponse, BehaviourSettings
 from app.schemas.chat import ChatResponse
 from app.schemas.document import IngestResult
 from app.schemas.health import AiServiceHealth
@@ -25,6 +26,7 @@ INGEST_TIMEOUT_SECONDS = 600.0
 DELETE_TIMEOUT_SECONDS = 30.0
 # A turn can load models and run up to three retrieval rounds (§6.8: 30-90 s); stay well above.
 CHAT_TIMEOUT_SECONDS = 300.0
+BEHAVIOUR_TIMEOUT_SECONDS = 10.0
 
 
 class AiServiceError(RuntimeError):
@@ -146,3 +148,30 @@ async def send_chat(
         return ChatResponse.model_validate(response.json())
     except (ValidationError, ValueError) as exc:
         raise AiServiceError("AI service sent an unexpected chat response") from exc
+
+
+async def get_behaviour(settings: Settings) -> BehaviourResponse:
+    """The assistant's current behaviour, its defaults and the locked §7 rules (§6.9)."""
+    response = await _call(
+        settings, "GET", "/internal/behaviour", timeout_seconds=BEHAVIOUR_TIMEOUT_SECONDS
+    )
+    return _parse_behaviour(response)
+
+
+async def update_behaviour(settings: Settings, body: BehaviourSettings) -> BehaviourResponse:
+    """Replace the assistant's behaviour; it applies from the next chat message (§6.9)."""
+    response = await _call(
+        settings,
+        "PUT",
+        "/internal/behaviour",
+        timeout_seconds=BEHAVIOUR_TIMEOUT_SECONDS,
+        json=body.model_dump(),
+    )
+    return _parse_behaviour(response)
+
+
+def _parse_behaviour(response: httpx.Response) -> BehaviourResponse:
+    try:
+        return BehaviourResponse.model_validate(response.json())
+    except (ValidationError, ValueError) as exc:
+        raise AiServiceError("AI service sent an unexpected behaviour response") from exc
