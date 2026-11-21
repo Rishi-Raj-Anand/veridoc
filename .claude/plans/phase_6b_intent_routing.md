@@ -196,13 +196,28 @@ Run a real-browser walkthrough with Playwright against a throwaway stack on port
 
 ## Results
 
-**Commits:** `a55b25a` plan, `f164bbf` AI service, `9ada0ec` backend, `56b629d` frontend.
+**Commits:** `a55b25a` plan, `f164bbf` AI service, `9ada0ec` backend, `56b629d` frontend, `846a879` gate docs.
 
 **Checks:** AI 387 tests (+8 live classifier tests on real `qwen3:8b`, all passing), backend 160, frontend 35. ruff, ruff format, ESLint, `tsc`, Prettier and `vite build` are clean. Five existing pipeline tests counted every LLM call. They now count the medical loop's own calls (`rag_chat_calls`, `rag_events`), and the full `events` list still shows `chat:classify` first.
 
 **Bug caught by a test:** the behaviour form remounts after a save (its key is `updated_at`), which threw away its own mutation state, so "Saved" never appeared. The save mutation now lives in the page, and the test passes.
 
 **Live gate (6B.8):** 15/15 in headless Chrome against a throwaway stack. The table is in CLAUDE.md §17 Phase 6B. Small talk takes 0.6–1.0 s and refusals 0.3 s, because neither loads `bge-m3`; medical answers take 15–17 s, as before.
+
+## Added after the gate (same branch)
+
+| Commit | What | Why |
+|---|---|---|
+| `c0291f8`, `026b897` | `ingestion/csv_to_md.py`: CSV → Markdown, one `##` section per entry. It merges rows that share a title and numbered columns (`Symptom_1..N`), and has an optional underscores-to-spaces mode. Standard library only. | You wanted CSV data in the knowledge base. |
+| `122e83d` | **6B.9** Direct `.csv` upload. The backend accepts it, and `parsers.parse_csv` runs the converter during ingestion. Live: a 3-row CSV was `ready` in ~8 s, and a typhoid question was answered `verified`, citing `live.csv` p. 1. | Converting first was friction. |
+| `1068618`, `9e397b0`, this commit | **6B.10** `start.md`: setup, start, check, stop, troubleshooting, annotated folder structure, demo admin login. | A single place to start the whole stack. |
+| `2aa83b2` | **6B.11** `INGEST_TIMEOUT_MINUTES` (default 60), an honest timeout message, UTC timestamps. | MedQuAD (22.8 MB) hit the fixed 10-minute wait, and the admin list showed UTC as local time. |
+
+**Measured for 6B.11:**
+- `bge-m3` embeds about **45 chunks/s** on the RTX 5050.
+- MedQuAD is 14,349 entries, which makes 10,267 parents and 24,957 children, so embedding alone takes about 9–10 min.
+
+**Final checks:** AI 402 tests (+8 live), backend 171, frontend 35, all clean.
 
 ## Deviations from the plan
 - `ai_service/contracts.py` was added for the shared `Intent` and `ChatStatus` literals, so the state, transcripts and router use one definition.

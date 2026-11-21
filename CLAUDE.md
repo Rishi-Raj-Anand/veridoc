@@ -466,6 +466,8 @@ INGEST_TIMEOUT_MINUTES=60
 CORS_ORIGINS=http://localhost:5173
 ```
 
+This project's local demo admin login is `admin@veridoc.local` / `12345`, documented in `start.md`. That password is public in the repository: change it before any deployment.
+
 `ai/.env`:
 ```
 DATA_DIR=../data
@@ -840,6 +842,9 @@ retrieval. Lands before Phase 7 so the evaluation measures the pipeline that shi
 - ✅ **6B.7** Tests: AI 387 (+8 live behind `-m ollama`), backend 160, frontend 35 (6 files); ruff, ESLint, `tsc`, Prettier, `vite build` clean.
 - ✅ **6B.8** Live gate in a real browser.
 - ✅ **6B.9** Direct CSV upload (added after the gate): backend accepts `.csv`; `parsers.parse_csv` converts it to one section per entry (`ingestion/csv_to_md.py`). Live check on a throwaway stack: a 3-row CSV went `ready` in ~8 s, and "What are the symptoms of typhoid?" was answered `verified`, citing `live.csv` p. 1 and combining two merged rows.
+- ✅ **6B.10** `start.md` at the root: setup, start order, a one-shot launcher, health checks, stop/restart, troubleshooting, the annotated folder structure and the demo admin login.
+- ✅ **6B.11** Large uploads: the ingest wait is `INGEST_TIMEOUT_MINUTES` (default 60, was a fixed 10 min); a read timeout says what happened instead of "is it running?"; `created_at` is returned as UTC with `Z`, because SQLite drops the timezone and the admin list was showing UTC as local time. Found with MedQuAD (22.8 MB, ~25,000 chunks, ~10–12 min to ingest).
+- **Final checks for 6B:** AI 402 tests (+8 live), backend 171, frontend 35; ruff, ruff format, ESLint, `tsc`, Prettier and `vite build` clean.
 
 **Gate: PASSED 2026-11-21.** Playwright drove headless Chrome against a throwaway stack (ports 18000/18001/15173, scratch `DATA_DIR`, real `qwen3:8b` + `bge-m3`); the real `data/` was not touched. 15/15 checks, no browser console errors, and the AI service's own log agreed on every route:
 

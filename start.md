@@ -46,7 +46,8 @@ Then edit them:
 - `INTERNAL_API_KEY` must be the **same** secret in `backend\.env` and `ai\.env`.
 - `JWT_SECRET` in `backend\.env` must be at least 32 characters.
 - `ADMIN_EMAIL` and `ADMIN_PASSWORD` in `backend\.env` are the admin login. The admin account
-  is created, or its password updated, every time the backend starts.
+  is created, or its password updated, every time the backend starts. This project's demo login
+  is `admin@veridoc.local` / `12345` (section 3).
 
 **Install the dependencies and create the database.** `uv` downloads its own Python 3.12; ignore
 the system Python:
@@ -122,10 +123,19 @@ The same check appears as the **System status** card on `/admin`.
 ollama ps    # while a chat is running: both models should show 100% GPU
 ```
 
-**Logins:**
-- **Admin:** the `ADMIN_EMAIL` / `ADMIN_PASSWORD` from `backend\.env`. The admin lands on
-  `/admin`, where documents are uploaded.
-- **Users:** register at http://localhost:5173/register.
+**Logins**
+
+| Account | Email | Password | Lands on |
+|---|---|---|---|
+| Admin (the only one) | `admin@veridoc.local` | `12345` | `/admin`: upload documents, edit the assistant's behaviour |
+| User | register at http://localhost:5173/register | at least 8 characters | `/chat` |
+
+- **Where these come from:** the admin login is set by `ADMIN_EMAIL` / `ADMIN_PASSWORD` in
+  `backend\.env`. The backend creates the admin, or updates its password, on every start.
+- **On a fresh clone:** `.env.example` ships `ADMIN_PASSWORD=change-me`, so set
+  `ADMIN_PASSWORD=12345` in `backend\.env` to use the login above, or choose your own.
+- **Security:** this is a local demo account and its password is public in this repository.
+  Change it before running VeriDoc anywhere other people can reach.
 
 ---
 
