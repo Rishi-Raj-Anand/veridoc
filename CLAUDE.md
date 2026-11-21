@@ -71,6 +71,22 @@ Implications:
 
 Model names, thresholds, and Top-K values live in config/env — never hardcode them in logic.
 
+**Pinned versions** (surveyed 2026-11-21; exact pins live in the three manifests). Where a pin
+differs from the prose above, this table wins:
+
+| Pin | Why it differs |
+|---|---|
+| SQLAlchemy **2.1.9** | current release of the 2.x line written as "2.0" above; same modern API |
+| TypeScript **6.0.3**, not 7.0.2 | `typescript-eslint@8.73.0` peers on `typescript >=4.8.4 <6.1.0`. On TS 7 every TypeScript lint rule silently switches off, including the §14 "no `any`" rule. **Bump only when that peer range widens.** |
+| Tailwind CSS **4.3.5** | v4 is CSS-first: the `@tailwindcss/vite` plugin plus `@import "tailwindcss";` in `index.css`. **There is no `tailwind.config.js`** — theme overrides go in CSS `@theme` blocks. |
+| `react-router` **8.5.2** | since v7 `react-router` is the package to import; `react-router-dom` is a deprecated re-export |
+| Vite **8.3.8**, React **19.3.1** | current majors |
+| `ragas` **0.4.4** | kept in an optional `eval` dependency group (`uv sync --group eval`), not the default AI deps — it pulls in langchain and datasets and is only needed for task 7.2 |
+
+The frontend uses a **single `tsconfig.json`** rather than Vite's three-file project-reference
+layout, because `tsc --noEmit` (what `npm run typecheck` runs) conflicts with the
+`composite: true` that project references require.
+
 ---
 
 ## 4. Architecture
@@ -121,6 +137,7 @@ veridoc/
 │   ├── chats/                 # <session_id>.json transcripts
 │   └── eval/                  # RAGAS result CSVs
 ├── frontend/
+│   ├── .env.example           # VITE_API_URL
 │   └── src/
 │       ├── api/               # ALL fetch calls + response types live here
 │       ├── components/
@@ -130,6 +147,7 @@ veridoc/
 │       └── main.tsx
 ├── backend/
 │   ├── pyproject.toml
+│   ├── .python-version        # 3.12, provisioned by uv
 │   ├── .env.example
 │   ├── alembic/
 │   ├── app/
@@ -144,6 +162,7 @@ veridoc/
 │   └── tests/
 └── ai/
     ├── pyproject.toml
+    ├── .python-version       # 3.12, provisioned by uv
     ├── .env.example
     ├── ai_service/
     │   ├── main.py
@@ -268,6 +287,9 @@ is a non-streaming UI with a "Thinking…" indicator. Rules:
   timeouts well above that.
 - During ingestion only `bge-m3` is needed — embed all child chunks in one batched pass so
   the LLM is never swapped in mid-ingest.
+- Qdrant's `data/vectors/.lock` is advisory and **does not go stale**: the AI service was
+  hard-killed and restarted successfully (verified 2026-11-21), so a crashed service needs no
+  manual lock cleanup. The single-writer rule still holds for *concurrent* processes.
 - If this latency proves unacceptable during the 4.8 calibration pass, the documented escape
   hatch is the §3 fallback `qwen3:4b` (~3.3 GB, co-resident with `bge-m3`, no swapping) at the
   cost of a weaker Verifier. Changing it requires updating §3 and §11 in the same change.
@@ -402,7 +424,8 @@ Never commit `.env` files. Keep `.env.example` files up to date whenever a varia
 
 **One-time setup**
 ```powershell
-# Install uv (Python package manager)
+# Install uv (Python package manager). Open a NEW terminal afterwards: the
+# installer edits PATH and the current shell will not see it.
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 
 # Pull models (Ollama for Windows must be installed and running)
@@ -414,9 +437,18 @@ ollama pull bge-m3
 ```powershell
 cd backend
 uv sync
-uv run alembic upgrade head
+uv run alembic upgrade head   # from Phase 1 onwards; no migrations exist before task 1.1
 uv run uvicorn app.main:app --reload --port 8000
 ```
+
+> The system Python on this machine is 3.14, which the project does not use. Both
+> `pyproject.toml` files pin `requires-python = ">=3.12,<3.13"` and carry a `.python-version`,
+> so `uv sync` downloads and uses its own CPython 3.12. Run every Python command through
+> `uv run` — never a bare `python`.
+>
+> `DATA_DIR=../data` is relative to the **working directory**, so start each service from its
+> own folder (`backend/`, `ai/`). Both log the resolved absolute path at startup; if that path
+> looks wrong, the working directory is wrong.
 
 **AI service** — never use `--reload` here
 ```powershell
@@ -544,14 +576,19 @@ messages and branch names (e.g. `feature/2.3-vector-store`).
 
 | # | Task | Key files | Done when |
 |---|---|---|---|
-| 0.1 | `git init`, `.gitignore` (`data/`, `.env`, `.venv/`, `node_modules/`), `.gitattributes`, README stub | root | `git status` clean, no data/env tracked |
-| 0.2 | Backend scaffold: `uv` project, app factory, `config.py` via pydantic-settings, ruff cfg (line 100), startup creates `data/*` dirs | `backend/pyproject.toml`, `app/main.py`, `app/config.py`, `.env.example` | `uv run uvicorn app.main:app` boots |
-| 0.3 | AI service scaffold + `X-Internal-Key` dependency, binds `127.0.0.1` | `ai/ai_service/main.py`, `config.py`, `security.py` | wrong key → 401 |
-| 0.4 | Health endpoints: AI checks Ollama reachable + `qwen3:8b`/`bge-m3` present + Qdrant opens; backend `/api/health` proxies it | `routers/health.py` (both services) | both return green with Ollama running |
-| 0.5 | Frontend scaffold: Vite + React + TS strict, Tailwind, Router, TanStack Query, ESLint/Prettier/Vitest, `src/api/client.ts` | `frontend/` | `npm run dev`, `lint`, `typecheck`, `test` all pass |
-| 0.6 | ~~Pull models, confirm `ollama ps` shows **100% GPU** at `num_ctx=8192`~~ | — | ✅ **done 2026-11-21** — both models pulled, both 100% GPU; findings in §2 and §6.8 |
+| ✅ 0.1 | `git init`, `.gitignore` (`data/`, `.env`, `.venv/`, `node_modules/`), `.gitattributes`, README stub | root | `git status` clean, no data/env tracked |
+| ✅ 0.2 | Backend scaffold: `uv` project, app factory, `config.py` via pydantic-settings, ruff cfg (line 100), startup creates `data/*` dirs | `backend/pyproject.toml`, `app/main.py`, `app/config.py`, `.env.example` | `uv run uvicorn app.main:app` boots |
+| ✅ 0.3 | AI service scaffold + `X-Internal-Key` dependency, binds `127.0.0.1` | `ai/ai_service/main.py`, `config.py`, `security.py` | wrong key → 401 |
+| ✅ 0.4 | Health endpoints: AI checks Ollama reachable + `qwen3:8b`/`bge-m3` present + Qdrant opens; backend `/api/health` proxies it | `routers/health.py` (both services) | both return green with Ollama running |
+| ✅ 0.5 | Frontend scaffold: Vite + React + TS strict, Tailwind, Router, TanStack Query, ESLint/Prettier/Vitest, `src/api/client.ts` | `frontend/` | `npm run dev`, `lint`, `typecheck`, `test` all pass |
+| ✅ 0.6 | ~~Pull models, confirm `ollama ps` shows **100% GPU** at `num_ctx=8192`~~ | — | ✅ **done 2026-11-21** — both models pulled, both 100% GPU; findings in §2 and §6.8 |
 
-**Gate:** all three services start in separate terminals; `/api/health` green.
+**Gate: PASSED 2026-11-21.** All three services start; `/api/health` reports `ok` with both
+models detected and Qdrant open. Verified: 401 without the internal key, 200 with it, nested
+health through the backend, `degraded` (200, ~instant) with the AI service stopped, the `data/`
+tree created with absolute paths logged, `data/`+`.env`+`node_modules` untracked, and the Vite
+dev server serving the shell with Tailwind compiling. Checks: backend 14 tests, AI 12 tests,
+frontend 3 tests, ruff + ruff format + ESLint + tsc + prettier all clean.
 
 ### Phase 1 — Auth & data model (M2)
 
