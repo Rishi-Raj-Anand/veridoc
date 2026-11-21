@@ -2,8 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ✅ **Complete — gate passed 2026-11-21** (on `feature/phase-3-single-pass`, not yet merged) |
-| **Branch** | `feature/phase-3-single-pass` |
+| **Status** | ✅ **Complete — gate passed and merged to `main` 2026-11-21** |
+| **Branch** | `feature/phase-3-single-pass` (merged, then deleted) |
+| **Commits** | `4efa635` plan · `23a6198` AI service 3.1–3.5 · `32c8452` backend 3.5 · `7411f26` docs + gate result, merged as `ce21c4b` |
 | **Tasks** | 3.0 – 3.6 |
 | **Gate** | A grounded, cited answer end to end over HTTP (`POST /api/chat/message`), no frontend |
 | **Touches** | `ai/` and `backend/`. No frontend, no Verifier, no history or transcripts, no safety_check |
@@ -196,5 +197,29 @@ and the Verifier both matter. Latency was 5–16 s per turn here (cold swap incl
 | smoke users `@smoke.test` | `@example.com` | `email-validator` rejects special-use domains (documented in §3); a smoke-script slip, not a code issue |
 
 ### Next
-Phase 4 (Verifier & escalation). The running developer AI service on `:8001` predates this phase and needs a
-restart (no `--reload`) to expose `/internal/chat`.
+Phase 4 (Verifier & escalation). See the carry-forward notes in the close-out below.
+
+## Close-out (2026-11-21)
+
+**Final state of `main`:** merge `ce21c4b`. AI service 126 tests (+2 live behind `-m ollama`), backend 148 tests,
+`ruff check` and `ruff format --check` clean in both, re-run on `main` after the merge. Only `main` remains: no other
+branches, no stashes, no remotes, working tree clean.
+
+**Clean-up performed:** the throwaway smoke `DATA_DIR`, its logs and the driver script were removed from the scratch
+area; ports 18000/18001 are free; the developer's real `data/` (`chats/` still empty) and `documents/` were not touched.
+
+**Servers:** the AI service on `:8001` (no `--reload`) was restarted on the Phase 3 code and answers `/internal/chat`
+(401 without the key); the backend on `:8000` (`--reload`) picked up `/api/chat/message` and reports `ok`. The real
+`data/` has no documents indexed yet, so a chat there falls back until one is uploaded.
+
+**Carry-forward notes for later phases**
+
+| For | Note |
+|---|---|
+| 4.2 / 4.3 verifier | `Generator.generate(question, sources)` returns the raw draft; `graph/pipeline.py` `after_generate` is where `verify` slots in, ahead of the current guards. `status="verified"` is only "passed the code guards" until then |
+| 4.4 escalation | `Retriever.retrieve(query)` is iteration 1 only and `group_sources` numbers one `[n]` per `(filename, page)`. Level 2/3 need parents via `Docstore.get_parents` (order-preserving), plus new Top-K settings beside `top_k_precision` |
+| 4.5 graph | `PipelineState` already carries `iteration`, `sources`, `best_score`, `gate_passed`; add the verifier fields and `escalate`/`fallback` edges there |
+| 4.6 budget | `Generator` sends system prompt + sources + question only; no history yet, so the §6.4 trimmer has nothing to trim until Phase 5 |
+| 4.8 calibration | off-corpus scores seen: 0.318 (France, under the gate) and 0.409 (car brakes, over it, caught by `NOT_IN_DOCUMENTS`); in-corpus 0.55–0.66. Warm single-iteration turns took 5–16 s |
+| 5.3 / 5.4 | `emergency` is always `false` and `FALLBACK_MESSAGE` / `DISCLAIMER` live in `ai_service/config.py` until safety lands |
+| known limits | no history or transcripts yet (each turn is independent); chat turns are serialised by `app.state.chat_lock`; the backend records a `chat_sessions` row before the AI call, so a failed turn still leaves the session claimed |
