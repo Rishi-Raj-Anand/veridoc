@@ -230,4 +230,4 @@ The parent-only gate was first run against a 2-chunk synthetic document and pass
 
 **Not done here:** a live chat against the real `data/`: it has no documents indexed yet, so a question would fall back until one is uploaded.
 
-**Left alone (not from this phase):** an untracked `.vscode/settings.json` (`python.terminal.useEnvFile`) and an uncommitted one-line change to `CLAUDE.md` that replaces a blank line in *Settled decisions* with the text `ya`, which looks accidental. Both were already in the working tree and were excluded from the Phase 4 commits.
+**Resolved after close-out (not from this phase):** an accidental one-line edit to `CLAUDE.md` (a blank line replaced by the text `ya`) was removed by the developer, so `CLAUDE.md` matches the last commit. The untracked `.vscode/settings.json` (`python.terminal.useEnvFile`) is per-developer, so `.vscode/` is now gitignored (`03f3206`). The working tree is clean.
