@@ -22,6 +22,9 @@ dist/
 dist-ssr/
 .vite/
 
+# --- local Claude Code state (phase plans ARE tracked) ---
+.claude/settings.local.json
+
 # --- misc ---
 *.log
 .DS_Store
