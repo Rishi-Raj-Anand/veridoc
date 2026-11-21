@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from ai_service.config import DISCLAIMER, FALLBACK_MESSAGE
+from ai_service.config import DISCLAIMER, EMERGENCY_NOTICE, FALLBACK_MESSAGE
 from ai_service.ingestion.chunker import ChildChunk
 from tests.helpers import FakeLlm, build_app, internal_client, verifier_json
 
@@ -110,3 +110,54 @@ async def test_ollama_down_is_503_with_its_message(monkeypatch: pytest.MonkeyPat
 
     assert response.status_code == 503
     assert "Ollama" in response.json()["detail"]
+
+
+async def test_a_two_turn_conversation_is_condensed_and_stored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    llm = FakeLlm(
+        query_vector=VECTOR,
+        reply="Use bed nets [1].",
+        condense_replies=["How is malaria prevented in children?"],
+    )
+    app = seeded_app(monkeypatch, llm)
+
+    async with internal_client(app) as client:
+        first = await client.post("/internal/chat", json=body())
+        second = await client.post("/internal/chat", json=body("what about for children?"))
+
+    assert (first.status_code, second.status_code) == (200, 200)
+    assert second.json()["status"] == "verified"
+    assert len(llm.condense_calls) == 1  # only the follow-up needed rewriting
+    transcript = app.state.chat_store.load(SESSION, 3)
+    assert transcript is not None
+    assert len(transcript.turns) == 4
+    assert transcript.turns[3].standalone_query == "How is malaria prevented in children?"
+
+
+async def test_another_users_session_is_403(monkeypatch: pytest.MonkeyPatch) -> None:
+    llm = FakeLlm(query_vector=VECTOR, reply="Use bed nets [1].")
+    app = seeded_app(monkeypatch, llm)
+
+    async with internal_client(app) as client:
+        await client.post("/internal/chat", json=body())
+        calls = len(llm.events)
+        response = await client.post("/internal/chat", json=body(user_id=4))
+
+    assert response.status_code == 403
+    assert len(llm.events) == calls
+
+
+async def test_an_emergency_response_carries_the_flag_and_the_notice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = seeded_app(monkeypatch, FakeLlm(query_vector=VECTOR, reply="Use bed nets [1]."))
+
+    async with internal_client(app) as client:
+        response = await client.post("/internal/chat", json=body("I have crushing chest pain"))
+
+    payload = response.json()
+    assert payload["emergency"] is True
+    assert payload["answer"].startswith(EMERGENCY_NOTICE)
+    assert payload["status"] == "verified"
+    assert payload["disclaimer"] == DISCLAIMER

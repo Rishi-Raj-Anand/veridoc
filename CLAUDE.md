@@ -213,14 +213,16 @@ safety_check → condense_query → retrieve → generate → verify
 
 | Node | Behaviour |
 |---|---|
-| `safety_check` | Deterministic keyword/regex match (list in `ai_service/agents/safety_terms.yaml`) for red-flag emergencies (chest pain, difficulty breathing, stroke signs, severe bleeding, suicidal thoughts, poisoning/overdose, unconsciousness, etc.). If matched, set `emergency=true` — the final response is **prefixed** with the emergency notice (§7). The pipeline still runs. |
-| `condense_query` | If the session has prior turns, rewrite the latest message into a **standalone question** using the last turns (e.g. "what about for children?" → "What is the treatment for migraine in children?"). First message passes through unchanged. |
+| `safety_check` | Deterministic keyword/regex match (list in `ai_service/agents/safety_terms.yaml`) for red-flag emergencies (chest pain, difficulty breathing, stroke signs, severe bleeding, suicidal thoughts, poisoning/overdose, unconsciousness, etc.). It scans the raw message, and `condense_query` scans the standalone question too (OR-ed), so a follow-up that only means an emergency once the earlier turns are folded in is still flagged. If matched, set `emergency=true` — the final response, a fallback included, is **prefixed** with the emergency notice (§7). The pipeline still runs. False positives ("no chest pain") are accepted on purpose. |
+| `condense_query` | If the session has prior turns, rewrite the latest message into a **standalone question** using the last turns (e.g. "what about for children?" → "What is the treatment for migraine in children?"). First message passes through unchanged (no LLM call). A message that names no subject of its own ("what should I do now?") inherits the conversation's subject. Only the condenser sees history; the Generator and Verifier see the standalone question and the sources. |
 | `retrieve` | Behaviour depends on `iteration` (§6.3). |
 | `generate` | Generator answers **only** from the provided context, cites every claim as `[n]` mapped to sources. If the context lacks the answer, it must say so. |
 | `verify` | Verifier audits the draft against the **retrieved context only** (never against chat history) and returns strict JSON (§6.5). |
 | `escalate` | `iteration += 1`; append the Verifier's `missing_info` to the retrieval query. |
-| `finalize` | Attach citations + disclaimer, save turn to `data/chats/`, return `status="verified"`. |
-| `fallback` | Return the fixed fallback message (§7), save turn, `status="fallback"`. Never return an unverified draft. |
+| `finalize` | Attach citations (+ emergency notice if flagged), return `status="verified"`. The disclaimer is attached by the API. |
+| `fallback` | Return the fixed fallback message (§7), `status="fallback"`. Never return an unverified draft. |
+
+The turn is loaded and saved by `run_turn` around the graph (history before, `data/chats/` after), so nodes do no file I/O; a transcript that cannot be saved is logged and does not fail the turn.
 
 ### 6.3 Escalation levels
 
@@ -275,7 +277,9 @@ If the JSON fails to parse/validate, retry once, then treat as `fail`.
 - Backend records `(session_id, user_id)` on the first message and rejects use of another user's session.
 - AI service stores each turn in `data/chats/<session_id>.json`:
   `{session_id, user_id, created_at, turns: [{role, content, standalone_query, status, iterations, citations, verifier_scores, timestamp}]}`.
-- Write the transcript atomically (write temp file, then replace).
+- Each exchange adds **two** entries: the `user` one (`content`, `timestamp`) and the `assistant` one (`content` exactly as shown, notice included, plus `standalone_query`, `status`, `emergency`, `iterations`, `citations`, `verifier_scores` = the per-iteration attempts, `timestamp`).
+- Write the transcript atomically (temp file in the same directory, fsync, then `os.replace`, retried briefly on Windows `PermissionError`). A corrupt transcript is renamed `<id>.json.corrupt-<ts>` and the session starts fresh. The AI service also raises 403 when a transcript's `user_id` differs from the request's.
+- History for the condenser is the last `HISTORY_MAX_MESSAGES` entries within `HISTORY_MAX_TOKENS`, with the emergency notice stripped.
 - Scores and iteration counts are stored for evaluation but **never shown to users**.
 
 ### 6.8 Model residency and latency (8 GB VRAM)
@@ -694,12 +698,14 @@ reusing a session got 403, and a stopped AI service gave the friendly 503. `olla
 
 ### Phase 5 — Session memory & safety (M6)
 
-- **5.1** `memory/chat_store.py` — `data/chats/<session_id>.json`, atomic write (temp file then replace), turn shape per §6.7.
-- **5.2** `agents/condenser.py` + `prompts/condense.md` (temperature 0, last `HISTORY_MAX_MESSAGES`; the first message passes through unchanged).
-- **5.3** `agents/safety_terms.yaml` + `agents/safety.py` — deterministic regex/keyword match, sets `emergency=true`, pipeline still runs, response **prefixed** with the §7.2 notice.
-- **5.4** Fallback text and disclaimer defined in exactly one place (config) and surfaced through the API.
-- **5.5** Logging: per chat turn log iteration count, verifier scores and latency; never passwords, tokens or full JWTs.
-- **5.6** Tests: every safety term matches, condenser with a mocked LLM ("what about for children?"), transcript round-trip.
+- ✅ **5.1** `memory/chat_store.py` — `data/chats/<session_id>.json`, atomic write (temp file then replace), turn shape per §6.7.
+- ✅ **5.2** `agents/condenser.py` + `prompts/condense.md` (temperature 0, last `HISTORY_MAX_MESSAGES`; the first message passes through unchanged).
+- ✅ **5.3** `agents/safety_terms.yaml` + `agents/safety.py` — deterministic regex/keyword match, sets `emergency=true`, pipeline still runs, response **prefixed** with the §7.2 notice.
+- ✅ **5.4** Fallback text and disclaimer defined in exactly one place (config) and surfaced through the API.
+- ✅ **5.5** Logging: per chat turn log iteration count, verifier scores and latency; never passwords, tokens or full JWTs.
+- ✅ **5.6** Tests: every safety term matches, condenser with a mocked LLM ("what about for children?"), transcript round-trip.
+
+**Gate: PASSED 2026-11-21.** A two-turn conversation over HTTP is condensed into a standalone question and answered `verified`; a red-flag message comes back `emergency=true` with the §7.2 notice prefixed; the transcript on disk holds every exchange with its scores. Results and live findings are in `.claude/plans/phase_5_memory_safety.md`.
 
 ### Phase 6 — Frontend (M7)
 
@@ -734,6 +740,10 @@ After Phase 1 the seams are clean enough to work in parallel:
 - Freeze the shared contracts in Phase 0 so both tracks can mock the other: `ChatResponse` and the `/internal/ingest` + `/internal/chat` bodies (§9). Do not change them without telling the other track.
 
 ### Settled decisions
+
+- **History goes to the condenser only.** The Generator and Verifier never see earlier turns (§6.2 grounding); the §6.4 history budget applies to the condense call.
+- **Emergency scope:** the raw message OR the standalone question, so follow-ups are caught. The notice is also prefixed to a fallback. `EMERGENCY_NOTICE`, `FALLBACK_MESSAGE` and `DISCLAIMER` live only in `ai_service/config.py` (a test enforces it).
+- **Transcript I/O lives in `run_turn`**, not in graph nodes; `store=None` (the eval script) reads and writes nothing.
 
 - **Citation numbers are one per `(filename, page)`**: chunks from the same page share a number, assigned in best-score order, and `citations` lists only the numbers the answer uses. Markers that point at no source are stripped from the text.
 - **Phase 3 guards fall back instead of guessing:** no chunk reaching `MIN_RETRIEVAL_SCORE` (the LLM is not called), the `NOT_IN_DOCUMENTS` sentinel, or no valid `[n]` all return the §7.4 fallback.

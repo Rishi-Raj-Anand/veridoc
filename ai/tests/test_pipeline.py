@@ -7,11 +7,14 @@ from pathlib import Path
 import pytest
 from qdrant_client import QdrantClient
 
+from ai_service.agents.condenser import Condenser
 from ai_service.agents.generator import Generator
+from ai_service.agents.safety import SafetyChecker
 from ai_service.agents.verifier import Verifier
-from ai_service.config import FALLBACK_MESSAGE, Settings
+from ai_service.config import EMERGENCY_NOTICE, FALLBACK_MESSAGE, Settings
 from ai_service.graph.pipeline import PipelineResult, build_pipeline, run_turn
 from ai_service.ingestion.chunker import ChildChunk, ParentChunk
+from ai_service.memory.chat_store import ChatStore, SessionOwnershipError
 from ai_service.retrieval.docstore import Docstore
 from ai_service.retrieval.retriever import Retriever
 from ai_service.retrieval.vector_store import VectorStore
@@ -65,11 +68,22 @@ class Env:
             Retriever(self.store, self.docstore, llm, self.settings),
             Generator(llm, self.settings),
             Verifier(llm, self.settings),
+            Condenser(llm, self.settings),
+            SafetyChecker.load(),
             self.settings,
         )
+        self.chats = ChatStore(tmp_path / "chats")
 
-    def run(self, message: str = QUESTION) -> PipelineResult:
-        return run_turn(self.pipeline, session_id=SESSION, user_id=7, message=message)
+    def run(
+        self, message: str = QUESTION, *, store: ChatStore | str | None = "env", user_id: int = 7
+    ) -> PipelineResult:
+        return run_turn(
+            self.pipeline,
+            store=self.chats if store == "env" else store,
+            session_id=SESSION,
+            user_id=user_id,
+            message=message,
+        )
 
 
 def outcomes(result: PipelineResult) -> list[str]:
@@ -294,3 +308,193 @@ def test_the_iteration_count_never_exceeds_the_cap(tmp_path: Path) -> None:
 
     assert result.iterations <= 3
     assert max(a["iteration"] for a in result.attempts) == 3
+
+
+# --- session memory (Phase 5) ----------------------------------------------------------
+
+FOLLOW_UP = "what about for children?"
+STANDALONE = "How is malaria prevented in children?"
+
+
+def two_turns(tmp_path: Path, **llm_args: object) -> tuple[Env, PipelineResult]:
+    llm = FakeLlm(
+        query_vector=v(1.0),
+        reply="Use bed nets [1].",
+        condense_replies=[STANDALONE],
+        **llm_args,  # type: ignore[arg-type]
+    )
+    env = Env(tmp_path, llm)
+    env.run()
+    return env, env.run(FOLLOW_UP)
+
+
+def test_the_first_turn_makes_no_condenser_call(tmp_path: Path) -> None:
+    env = Env(tmp_path, FakeLlm(query_vector=v(1.0), reply="Use bed nets [1]."))
+
+    result = env.run()
+
+    assert env.llm.condense_calls == []
+    assert result.standalone_query == QUESTION
+    assert env.llm.events == ["embed", "chat:gen", "chat:verify"]
+
+
+def test_a_follow_up_is_condensed_and_retrieval_uses_the_standalone_question(
+    tmp_path: Path,
+) -> None:
+    env, result = two_turns(tmp_path)
+
+    assert result.standalone_query == STANDALONE
+    assert env.llm.calls[-1] == [STANDALONE]  # the second embed call
+    assert env.llm.events[3:] == ["chat:condense", "embed", "chat:gen", "chat:verify"]
+
+
+def test_generator_and_verifier_see_the_standalone_question_and_no_history(
+    tmp_path: Path,
+) -> None:
+    env, _ = two_turns(tmp_path)
+
+    gen = env.llm.generator_calls[1]["messages"][1]["content"]
+    ver = env.llm.verifier_calls[1]["messages"][1]["content"]
+    for text in (gen, ver):
+        assert f"Question: {STANDALONE}" in text
+        assert FOLLOW_UP not in text
+        assert "Conversation:" not in text and "Assistant:" not in text
+
+
+def test_the_condenser_sees_the_earlier_exchange(tmp_path: Path) -> None:
+    env, _ = two_turns(tmp_path)
+
+    user = env.llm.condense_calls[0]["messages"][1]["content"]
+    assert f"User: {QUESTION}" in user
+    assert "Assistant: Use bed nets [1]." in user
+    assert f"Latest message: {FOLLOW_UP}" in user
+
+
+def test_the_transcript_holds_both_exchanges_with_scores(tmp_path: Path) -> None:
+    env, _ = two_turns(tmp_path)
+
+    transcript = env.chats.load(SESSION, 7)
+
+    assert transcript is not None
+    assert [t.role for t in transcript.turns] == ["user", "assistant", "user", "assistant"]
+    assert [t.content for t in transcript.turns if t.role == "user"] == [QUESTION, FOLLOW_UP]
+    second = transcript.turns[3]
+    assert second.standalone_query == STANDALONE
+    assert (second.status, second.iterations, second.emergency) == ("verified", 1, False)
+    assert second.citations == [{"n": 1, "filename": "disease.md", "page": 1}]
+    assert second.verifier_scores is not None
+    assert second.verifier_scores[0]["outcome"] == "pass"
+    assert second.verifier_scores[0]["faithfulness"] == 1.0
+
+
+def test_without_a_store_nothing_is_read_or_written(tmp_path: Path) -> None:
+    env = Env(tmp_path, FakeLlm(query_vector=v(1.0), reply="Use bed nets [1]."))
+
+    result = env.run(store=None)
+
+    assert result.status == "verified"
+    assert not (tmp_path / "chats").exists()
+
+
+def test_a_save_failure_does_not_fail_the_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = Env(tmp_path, FakeLlm(query_vector=v(1.0), reply="Use bed nets [1]."))
+
+    def boom(*_a: object, **_k: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(env.chats, "append_exchange", boom)
+
+    result = env.run()
+
+    assert (result.status, result.answer) == ("verified", "Use bed nets [1].")
+
+
+def test_another_users_session_is_refused_before_any_llm_call(tmp_path: Path) -> None:
+    env = Env(tmp_path, FakeLlm(query_vector=v(1.0), reply="Use bed nets [1]."))
+    env.run()
+    calls_before = len(env.llm.events)
+
+    with pytest.raises(SessionOwnershipError):
+        env.run(user_id=8)
+
+    assert len(env.llm.events) == calls_before
+
+
+# --- emergencies -----------------------------------------------------------------------
+
+CHEST = "I have crushing chest pain, what can I take?"
+
+
+def test_an_emergency_prefixes_a_verified_answer(tmp_path: Path) -> None:
+    env = Env(tmp_path, FakeLlm(query_vector=v(1.0), reply="Use bed nets [1]."))
+
+    result = env.run(CHEST)
+
+    assert result.emergency
+    assert result.status == "verified"
+    assert result.answer == f"{EMERGENCY_NOTICE}\n\nUse bed nets [1]."
+    assert result.citations  # the pipeline still ran
+    assert "chest_pain" in result.emergency_matches
+
+
+def test_an_emergency_prefixes_the_fallback_too(tmp_path: Path) -> None:
+    env = Env(tmp_path, FakeLlm(query_vector=v(1.0), reply="NOT_IN_DOCUMENTS"))
+
+    result = env.run(CHEST)
+
+    assert (result.status, result.emergency) == ("fallback", True)
+    assert result.answer == f"{EMERGENCY_NOTICE}\n\n{FALLBACK_MESSAGE}"
+    assert result.citations == []
+
+
+def test_no_emergency_means_no_notice(tmp_path: Path) -> None:
+    env = Env(tmp_path, FakeLlm(query_vector=v(1.0), reply="Use bed nets [1]."))
+
+    result = env.run()
+
+    assert not result.emergency
+    assert EMERGENCY_NOTICE not in result.answer
+
+
+def test_the_generator_and_verifier_never_see_the_notice(tmp_path: Path) -> None:
+    env = Env(tmp_path, FakeLlm(query_vector=v(1.0), reply="Use bed nets [1]."))
+
+    env.run(CHEST)
+
+    for call in env.llm.chat_calls:
+        assert all(EMERGENCY_NOTICE not in m["content"] for m in call["messages"])
+
+
+def test_an_emergency_that_only_appears_in_the_standalone_question_is_flagged(
+    tmp_path: Path,
+) -> None:
+    llm = FakeLlm(
+        query_vector=v(1.0),
+        reply="Use bed nets [1].",
+        condense_replies=["What should I do for severe chest pain right now?"],
+    )
+    env = Env(tmp_path, llm)
+    first = env.run()
+
+    second = env.run("what should I do now?")
+
+    assert not first.emergency
+    assert second.emergency
+    assert second.answer.startswith(EMERGENCY_NOTICE)
+
+
+def test_the_transcript_keeps_the_notice_but_history_strips_it(tmp_path: Path) -> None:
+    llm = FakeLlm(query_vector=v(1.0), reply="Use bed nets [1].", condense_replies=[STANDALONE])
+    env = Env(tmp_path, llm)
+    env.run(CHEST)
+
+    env.run(FOLLOW_UP)
+
+    stored = env.chats.load(SESSION, 7)
+    assert stored is not None and stored.turns[1].content.startswith(EMERGENCY_NOTICE)
+    assert stored.turns[1].emergency is True
+    condense_input = llm.condense_calls[0]["messages"][1]["content"]
+    assert EMERGENCY_NOTICE not in condense_input
+    assert "Assistant: Use bed nets [1]." in condense_input

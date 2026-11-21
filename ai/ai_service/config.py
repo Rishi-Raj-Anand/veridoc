@@ -20,6 +20,10 @@ FALLBACK_MESSAGE = (
     "I couldn't find verified information in my medical references to answer this safely. "
     "Please consult a qualified doctor."
 )
+EMERGENCY_NOTICE = (
+    "⚠️ This may be a medical emergency. Call **112** (or **108** for an ambulance in "
+    "India) or go to the nearest emergency department now."
+)
 DISCLAIMER = (
     "VeriDoc AI provides information from reference documents and is not a substitute for "
     "professional medical advice, diagnosis, or treatment."

@@ -10,13 +10,17 @@ import pytest
 from fastapi import FastAPI
 from qdrant_client import QdrantClient
 
+from ai_service.agents.condenser import Condenser
 from ai_service.agents.generator import Generator
+from ai_service.agents.safety import SafetyChecker
 from ai_service.agents.verifier import Verifier
 from ai_service.config import get_settings
 from ai_service.graph.pipeline import build_pipeline
 from ai_service.llm import ollama_client
 from ai_service.llm.ollama_client import OllamaError
 from ai_service.main import create_app
+from ai_service.memory.chat_store import ChatStore
+from ai_service.prompts import load_prompt
 from ai_service.retrieval.docstore import Docstore
 from ai_service.retrieval.retriever import Retriever
 from ai_service.retrieval.vector_store import VectorStore
@@ -101,6 +105,7 @@ class FakeLlm(FakeEmbedder):
         reply: str = "",
         replies: list[str] | None = None,
         verifier_replies: list[str] | None = None,
+        condense_replies: list[str] | None = None,
         embed_fails: bool = False,
         chat_fails: bool = False,
     ) -> None:
@@ -110,13 +115,22 @@ class FakeLlm(FakeEmbedder):
         self._verifier_replies = (
             verifier_replies if verifier_replies is not None else [verifier_json()]
         )
+        self._condense_replies = condense_replies if condense_replies is not None else [""]
+        self._condense_prompt = load_prompt("condense")
         self.chat_fails = chat_fails
         self.chat_calls: list[dict[str, Any]] = []
         self.events: list[str] = []
 
+    def _is_condense(self, call: dict[str, Any]) -> bool:
+        return call["format"] is None and call["messages"][0]["content"] == self._condense_prompt
+
+    @property
+    def condense_calls(self) -> list[dict[str, Any]]:
+        return [c for c in self.chat_calls if self._is_condense(c)]
+
     @property
     def generator_calls(self) -> list[dict[str, Any]]:
-        return [c for c in self.chat_calls if c["format"] is None]
+        return [c for c in self.chat_calls if c["format"] is None and not self._is_condense(c)]
 
     @property
     def verifier_calls(self) -> list[dict[str, Any]]:
@@ -136,15 +150,19 @@ class FakeLlm(FakeEmbedder):
         temperature: float,
         format: dict[str, Any] | None = None,
     ) -> str:
-        script, kind = (
-            (self._verifier_replies, "verify") if format is not None else (self._gen_replies, "gen")
-        )
         call = {"messages": messages, "temperature": temperature, "format": format}
+        if format is not None:
+            kind, script = "verify", self._verifier_replies
+        elif messages[0]["content"] == self._condense_prompt:
+            kind, script = "condense", self._condense_replies
+        else:
+            kind, script = "gen", self._gen_replies
         self.chat_calls.append(call)
         self.events.append(f"chat:{kind}")
         if self.chat_fails:
             raise OllamaError("cannot reach Ollama at http://127.0.0.1:11434 - is it running?")
-        index = len([c for c in self.chat_calls if (c["format"] is not None) == (kind == "verify")])
+        calls = {"verify": self.verifier_calls, "condense": self.condense_calls}
+        index = len(calls.get(kind) or self.generator_calls)
         return script[min(index, len(script)) - 1]
 
 
@@ -178,8 +196,11 @@ def build_app(
         Retriever(store, app.state.docstore, app.state.llm, settings),
         Generator(app.state.llm, settings),
         Verifier(app.state.llm, settings),
+        Condenser(app.state.llm, settings),
+        SafetyChecker.load(),
         settings,
     )
+    app.state.chat_store = ChatStore(settings.chats_dir)
     return app
 
 

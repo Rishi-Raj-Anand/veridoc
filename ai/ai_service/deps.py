@@ -8,6 +8,7 @@ from fastapi import Depends, HTTPException, Request, status
 from langgraph.graph.state import CompiledStateGraph
 
 from ai_service.llm.ollama_client import OllamaClient
+from ai_service.memory.chat_store import ChatStore
 from ai_service.retrieval.docstore import Docstore
 from ai_service.retrieval.vector_store import VectorStore
 
@@ -35,7 +36,12 @@ def get_pipeline(request: Request) -> CompiledStateGraph:
     return _from_state(request, "pipeline", "chat pipeline")
 
 
+def get_chat_store(request: Request) -> ChatStore:
+    return _from_state(request, "chat_store", "chat store")
+
+
 VectorStoreDep = Annotated[VectorStore, Depends(get_vector_store)]
 DocstoreDep = Annotated[Docstore, Depends(get_docstore)]
 LlmDep = Annotated[OllamaClient, Depends(get_llm)]
 PipelineDep = Annotated[CompiledStateGraph, Depends(get_pipeline)]
+ChatStoreDep = Annotated[ChatStore, Depends(get_chat_store)]

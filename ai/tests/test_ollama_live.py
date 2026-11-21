@@ -64,3 +64,20 @@ def test_qwen3_verifier_rejects_an_unsupported_dosage() -> None:
 
     assert not result.parse_failed
     assert not result.passed
+
+
+def test_qwen3_condenses_a_follow_up_into_a_standalone_question() -> None:
+    from ai_service.agents.condenser import Condenser
+
+    settings = Settings(_env_file=None)
+    history = [
+        {"role": "user", "content": "What is the treatment for migraine?"},
+        {"role": "assistant", "content": "The references suggest rest and fluids [1]."},
+    ]
+
+    standalone = Condenser(OllamaClient(settings), settings).condense(
+        history, "what about for children?"
+    )
+
+    assert "migraine" in standalone.lower()
+    assert "child" in standalone.lower()
