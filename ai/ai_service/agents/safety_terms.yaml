@@ -1,0 +1,141 @@
+# Red-flag emergency terms for safety_check (CLAUDE.md §6.2, §7.2).
+#
+# Matching is deterministic: case-insensitive regexes, no LLM. A match prefixes the answer with
+# the emergency notice; the pipeline still runs. False positives (e.g. "no chest pain") are
+# accepted on purpose - the notice is advisory, and missing a real emergency is not.
+#
+# `examples` are phrases that MUST match their category; tests enforce this, and also that every
+# pattern is exercised by at least one example. Add an example with every new pattern.
+
+categories:
+  - name: chest_pain
+    patterns:
+      - '\bchest\s+(pain|pains|pressure|tightness|discomfort)\b'
+      - '\b(pain|pressure|tightness)\s+(in|on)\s+(my|the)\s+chest\b'
+      - '\bheart\s+attack\b'
+      - '\bcrushing\s+chest\b'
+    examples:
+      - "I have crushing chest pain"
+      - "chest tightness since morning"
+      - "pressure in my chest"
+      - "I think I'm having a heart attack"
+
+  - name: breathing
+    patterns:
+      - '\b(difficulty|trouble|struggling|hard|can.?t|cannot|unable)\s+(to\s+)?breath(e|ing)\b'
+      - '\bshort(ness)?\s+of\s+breath\b'
+      - '\bgasping\s+for\s+(air|breath)\b'
+      - '\b(choking|chokes|choked)\b'
+      - '\bstopped\s+breathing\b'
+    examples:
+      - "I have difficulty breathing"
+      - "she can't breathe"
+      - "severe shortness of breath"
+      - "gasping for air"
+      - "he is choking on food"
+      - "the baby stopped breathing"
+
+  - name: stroke
+    patterns:
+      - '\bstroke\b'
+      - '\b(face|facial)\s+(is\s+)?(droop\w*|drooping|numb\w*)\b'
+      - '\bslurred\s+speech\b'
+      - '\b(sudden|one.sided)\s+(weakness|numbness)\b'
+      - '\bcan.?t\s+(move|lift|feel)\s+(my|his|her|the)\s+(arm|leg|face)\b'
+    examples:
+      - "I think my father had a stroke"
+      - "his face is drooping"
+      - "slurred speech and confusion"
+      - "sudden weakness on one side"
+      - "one-sided numbness"
+      - "she can't lift her arm"
+
+  - name: severe_bleeding
+    patterns:
+      - '\b(severe|heavy|profuse|uncontrolled|massive)\s+bleeding\b'
+      - '\bbleeding\s+(heavily|badly|profusely|a\s+lot)\b'
+      - '\bwon.?t\s+stop\s+bleeding\b'
+      - '\bbleeding\s+(that\s+)?(won.?t|will\s+not|doesn.?t|does\s+not)\s+stop\b'
+      - '\bcoughing\s+(up\s+)?blood\b'
+      - '\bvomiting\s+blood\b'
+    examples:
+      - "severe bleeding from a cut"
+      - "he is bleeding heavily"
+      - "the wound won't stop bleeding"
+      - "bleeding that does not stop"
+      - "coughing up blood"
+      - "vomiting blood"
+
+  - name: self_harm
+    patterns:
+      - '\bsuicid(e|al)\b'
+      - '\bkill\s+(myself|my\s*self)\b'
+      - '\b(end|take)\s+my\s+(own\s+)?life\b'
+      - '\bwant\s+to\s+die\b'
+      - '\bself.?harm\b'
+      - '\bhurt(ing)?\s+myself\b'
+    examples:
+      - "I am having suicidal thoughts"
+      - "I want to kill myself"
+      - "I want to end my life"
+      - "I just want to die"
+      - "thoughts of self harm"
+      - "I keep hurting myself"
+
+  - name: poisoning_overdose
+    patterns:
+      - '\boverdos(e|ed|ing)\b'
+      - '\bpoison(ed|ing|ous)?\b'
+      - '\b(swallowed|drank|ingested|ate)\s+(bleach|poison|pesticide|detergent|kerosene)\b'
+      - '\btoo\s+many\s+(pills|tablets|capsules)\b'
+    examples:
+      - "my brother took an overdose"
+      - "I think she was poisoned"
+      - "the child swallowed bleach"
+      - "I took too many tablets"
+
+  - name: unconscious
+    patterns:
+      - '\b(unconscious|unresponsive|passed\s+out|collapsed|fainted)\b'
+      - '\bnot\s+(waking|responding|breathing)\b'
+      - '\b(won.?t|will\s+not|can.?t|cannot)\s+wake\s+(\w+\s+)?up\b'
+      - '\bloss\s+of\s+consciousness\b'
+    examples:
+      - "he is unconscious"
+      - "she passed out and is unresponsive"
+      - "my grandfather collapsed"
+      - "he is not responding"
+      - "I can't wake him up"
+      - "loss of consciousness"
+
+  - name: seizure
+    patterns:
+      - '\b(seizure|seizures|convulsion|convulsions|convulsing)\b'
+      - '\bhaving\s+a\s+fit\b'
+    examples:
+      - "my child is having a seizure"
+      - "he is convulsing"
+      - "having a fit"
+
+  - name: anaphylaxis
+    patterns:
+      - '\banaphyla\w*\b'
+      - '\bsevere\s+allergic\s+reaction\b'
+      - '\b(throat|tongue|lips|face)\s+(is\s+)?(swelling|swollen|closing)\b'
+      - '\bswelling\s+of\s+(the\s+)?(throat|tongue|lips|face)\b'
+    examples:
+      - "signs of anaphylaxis"
+      - "a severe allergic reaction"
+      - "my throat is closing"
+      - "tongue swollen after the injection"
+      - "swelling of the face"
+
+  - name: head_injury
+    patterns:
+      - '\b(severe|serious)\s+head\s+(injury|trauma)\b'
+      - '\bhit\s+(my|his|her|their)\s+head\b.*\b(vomit\w*|confus\w*|drows\w*|unconscious)\b'
+      - '\bhead\s+(injury|trauma)\b.*\b(vomit\w*|confus\w*|drows\w*|unconscious)\b'
+    examples:
+      - "a severe head injury"
+      - "he hit his head and is vomiting"
+      - "head trauma with confusion"
