@@ -2,8 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | Planned |
-| **Branch** | `feature/phase-2-ingestion` off `main` (`42ee084`) |
+| **Status** | ✅ **Complete — gate passed and merged to `main` 2026-11-21** |
+| **Branch** | `feature/phase-2-ingestion` (merged, then deleted) |
+| **Commits** | `075be7c` · `a1e73ac` · `1b7a155` · `c82547d` · `ce4d93c` · `7f9c01e` · `afe0b6e` · `ac8e29e` · `bb3c35d`, merged as `f225f00` |
 | **Tasks** | 2.1 – 2.10 (AI side first, then backend) |
 | **Gate** | A real PDF uploaded via `/api/admin/documents` flips to `ready` with a sane `chunk_count`; delete removes its Qdrant points and docstore parents |
 | **Touches** | `ai/` and `backend/` — no frontend, no LLM generation |
