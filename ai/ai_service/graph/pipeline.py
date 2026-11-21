@@ -2,10 +2,15 @@
 
 ::
 
-    safety_check -> condense_query -> retrieve -> generate -> verify -> finalize
-                                         ^                      |
-                                         '---- escalate <-------'   (fail, iteration < MAX)
-                                                          fail on the last iteration -> fallback
+    safety_check -> classify_intent -+-> smalltalk_reply                   (small talk)
+                                     +-> decline                            (off-topic)
+                                     '-> condense_query -> retrieve -> generate -> verify
+                                                           ^                      |
+                                                           '---- escalate <-------+
+                                          pass -> finalize; fail on the last iteration -> fallback
+
+``classify_intent`` (§6.9) sends only medical messages into the RAG loop. A red-flag message is
+always medical, so an emergency is never small-talked or declined.
 
 ``generate`` and ``verify`` are adjacent so no embedding call can fall between them and
 evict the LLM (§6.8). Every path that cannot produce a verified answer ends in ``fallback``;
@@ -25,11 +30,15 @@ from langgraph.graph.state import CompiledStateGraph
 
 from ai_service.agents.budget import trim_sources
 from ai_service.agents.citations import clean_citations, is_not_covered
+from ai_service.agents.classifier import IntentClassifier, is_greeting
 from ai_service.agents.condenser import Condenser
 from ai_service.agents.generator import Generator
 from ai_service.agents.safety import SafetyChecker
+from ai_service.agents.smalltalk import SmallTalk
 from ai_service.agents.verifier import Verifier
+from ai_service.behaviour import BehaviourStore
 from ai_service.config import EMERGENCY_NOTICE, FALLBACK_MESSAGE, Settings
+from ai_service.contracts import ChatStatus, Intent
 from ai_service.graph.state import Attempt, CitationDict, PipelineState
 from ai_service.memory.chat_store import ChatStore, Transcript, TurnEntry, now_iso
 from ai_service.retrieval.retriever import Retriever, Source
@@ -41,13 +50,14 @@ logger = logging.getLogger(__name__)
 class PipelineResult:
     answer: str
     citations: list[CitationDict]
-    status: Literal["verified", "fallback"]
+    status: ChatStatus
     emergency: bool
     iterations: int
     attempts: list[Attempt]
     sources: list[Source]
     standalone_query: str = ""
     emergency_matches: tuple[str, ...] = ()
+    intent: Intent = "medical"
 
 
 def with_notice(answer: str, emergency: bool) -> str:
@@ -62,12 +72,45 @@ def build_pipeline(
     condenser: Condenser,
     safety: SafetyChecker,
     settings: Settings,
+    *,
+    classifier: IntentClassifier,
+    smalltalk: SmallTalk,
+    behaviour: BehaviourStore,
 ) -> CompiledStateGraph:
     max_iterations = settings.max_iterations
 
     def safety_check(state: PipelineState) -> PipelineState:
         matches = safety.check(state["message"])
         return {"emergency": bool(matches), "emergency_matches": matches}
+
+    def classify_intent(state: PipelineState) -> PipelineState:
+        if state.get("emergency"):  # safety first: an emergency is never small talk
+            return {"intent": "medical"}
+        message = state["message"]
+        if is_greeting(message):  # no LLM call for a plain "hi" or "thanks"
+            return {"intent": "smalltalk"}
+        scope = behaviour.get().scope
+        return {"intent": classifier.classify(message, state.get("history", []), scope)}
+
+    def route_intent(
+        state: PipelineState,
+    ) -> Literal["condense_query", "smalltalk_reply", "decline"]:
+        intent = state.get("intent", "medical")
+        if intent == "smalltalk":
+            return "smalltalk_reply"
+        if intent == "out_of_scope":
+            return "decline"
+        return "condense_query"
+
+    def smalltalk_reply(state: PipelineState) -> PipelineState:
+        return {"answer": smalltalk.reply(state["message"]), "citations": [], "status": "smalltalk"}
+
+    def decline(state: PipelineState) -> PipelineState:
+        return {
+            "answer": behaviour.get().out_of_scope_message,
+            "citations": [],
+            "status": "out_of_scope",
+        }
 
     def condense_query(state: PipelineState) -> PipelineState:
         message = state["message"]
@@ -219,6 +262,9 @@ def build_pipeline(
 
     graph = StateGraph(PipelineState)
     graph.add_node("safety_check", safety_check)
+    graph.add_node("classify_intent", classify_intent)
+    graph.add_node("smalltalk_reply", smalltalk_reply)
+    graph.add_node("decline", decline)
     graph.add_node("condense_query", condense_query)
     graph.add_node("retrieve", retrieve)
     graph.add_node("generate", generate)
@@ -227,7 +273,12 @@ def build_pipeline(
     graph.add_node("finalize", finalize)
     graph.add_node("fallback", fallback)
     graph.add_edge(START, "safety_check")
-    graph.add_edge("safety_check", "condense_query")
+    graph.add_edge("safety_check", "classify_intent")
+    graph.add_conditional_edges(
+        "classify_intent", route_intent, ["condense_query", "smalltalk_reply", "decline"]
+    )
+    graph.add_edge("smalltalk_reply", END)
+    graph.add_edge("decline", END)
     graph.add_edge("condense_query", "retrieve")
     graph.add_conditional_edges("retrieve", gate_route, ["generate", "escalate", "fallback"])
     graph.add_conditional_edges("generate", after_generate, ["verify", "escalate", "fallback"])
@@ -278,12 +329,14 @@ def run_turn(
         sources=state.get("sources", []),
         standalone_query=state.get("query", message),
         emergency_matches=tuple(state.get("emergency_matches", [])),
+        intent=state.get("intent", "medical"),
     )
     logger.info(
-        "chat turn session=%s user=%d status=%s iterations=%d attempts=[%s] citations=%d "
+        "chat turn session=%s user=%d intent=%s status=%s iterations=%d attempts=[%s] citations=%d "
         "emergency=%s%s condensed=%s history=%d latency=%.2fs",
         session_id,
         user_id,
+        result.intent,
         result.status,
         result.iterations,
         " ".join(_attempt_summary(a) for a in attempts),
@@ -316,6 +369,7 @@ def _save_exchange(
         timestamp=now_iso(),
         standalone_query=result.standalone_query,
         status=result.status,
+        intent=result.intent,
         emergency=result.emergency,
         iterations=result.iterations,
         citations=[dict(c) for c in result.citations],

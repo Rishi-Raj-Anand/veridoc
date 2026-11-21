@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Annotated, Literal
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field, field_validator
 
 from ai_service.config import DISCLAIMER, Settings, get_settings
+from ai_service.contracts import ChatStatus
 from ai_service.deps import ChatStoreDep, PipelineDep
 from ai_service.graph.pipeline import run_turn
 from ai_service.llm.ollama_client import OllamaError
@@ -51,7 +52,7 @@ class Citation(BaseModel):
 class ChatResponse(BaseModel):
     answer: str
     citations: list[Citation]
-    status: Literal["verified", "fallback"]
+    status: ChatStatus
     emergency: bool
     disclaimer: str
 

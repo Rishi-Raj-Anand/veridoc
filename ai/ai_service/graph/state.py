@@ -6,6 +6,7 @@ import operator
 from typing import Annotated, Literal, TypedDict
 
 from ai_service.agents.verifier import VerifierResult
+from ai_service.contracts import ChatStatus, Intent
 from ai_service.retrieval.retriever import Source
 
 
@@ -35,6 +36,7 @@ class PipelineState(TypedDict, total=False):
     message: str
     history: list[dict[str, str]]  # earlier turns, newest last; only the condenser reads it
     # working
+    intent: Intent  # §6.9: only "medical" enters the RAG loop
     condensed: bool  # True when the standalone question differs from the message
     emergency_matches: list[str]  # red-flag categories that matched (§6.2 safety_check)
     query: str  # the standalone question; Generator and Verifier always see this
@@ -53,5 +55,5 @@ class PipelineState(TypedDict, total=False):
     # output
     answer: str
     citations: list[CitationDict]
-    status: Literal["verified", "fallback"]
+    status: ChatStatus
     emergency: bool
