@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from ai_service.routers.health import listed_model_names, normalise_model_name
+from ai_service.llm.ollama_client import listed_model_names, normalise_model_name
 from tests.helpers import FakeQdrant, build_app, internal_client
 
 

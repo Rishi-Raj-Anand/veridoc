@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 
-import ollama
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
 from ai_service.config import Settings, get_settings
+from ai_service.llm.ollama_client import OllamaClient, OllamaError, normalise_model_name
 from ai_service.security import require_internal_key
 
 logger = logging.getLogger(__name__)
@@ -51,47 +51,20 @@ class HealthResponse(BaseModel):
     qdrant: QdrantHealth
 
 
-def normalise_model_name(name: str) -> str:
-    """Add the implicit ``:latest`` tag Ollama reports but config omits.
-
-    ``EMBED_MODEL=bge-m3`` is pulled and listed by Ollama as ``bge-m3:latest``, so
-    comparing the raw strings would report a pulled model as missing.
-    """
-    return name if ":" in name else f"{name}:latest"
-
-
-def listed_model_names(listed: Any) -> set[str]:
-    """Extract model tags from an Ollama ``list()`` response, object or dict form."""
-    entries = getattr(listed, "models", None)
-    if entries is None and isinstance(listed, dict):
-        entries = listed.get("models", [])
-    names: set[str] = set()
-    for entry in entries or []:
-        name = getattr(entry, "model", None)
-        if name is None and isinstance(entry, dict):
-            name = entry.get("model") or entry.get("name")
-        if name:
-            names.add(normalise_model_name(str(name)))
-    return names
-
-
 async def check_ollama(settings: Settings) -> tuple[OllamaHealth, ModelsHealth]:
     """Ask Ollama for its model list and check both required models are present."""
     required = {
         "llm": normalise_model_name(settings.llm_model),
         "embed": normalise_model_name(settings.embed_model),
     }
-    client = ollama.Client(host=settings.ollama_host)
     try:
-        listed = await asyncio.to_thread(client.list)
-    except Exception as exc:  # health must report, never raise
+        available = await asyncio.to_thread(OllamaClient(settings).list_models)
+    except OllamaError as exc:  # health must report, never raise
         logger.warning("ollama unreachable at %s: %s", settings.ollama_host, exc)
         return (
-            OllamaHealth(ok=False, host=settings.ollama_host, error=f"{type(exc).__name__}: {exc}"),
+            OllamaHealth(ok=False, host=settings.ollama_host, error=str(exc)),
             ModelsHealth(llm=False, embed=False, missing=sorted(required.values())),
         )
-
-    available = listed_model_names(listed)
     return (
         OllamaHealth(ok=True, host=settings.ollama_host),
         ModelsHealth(

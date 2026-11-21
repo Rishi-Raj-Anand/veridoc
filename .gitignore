@@ -1,6 +1,9 @@
 # --- runtime data (never commit: contains uploads, vectors, chats, db) ---
 data/
 
+# --- reference documents used for testing uploads (never commit) ---
+documents/
+
 # --- secrets ---
 .env
 .env.*
