@@ -8,8 +8,8 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
+from ai_service.llm import ollama_client
 from ai_service.main import create_app
-from ai_service.routers import health as health_router
 
 INTERNAL_KEY = "test-internal-key"
 
@@ -56,10 +56,10 @@ def build_app(
     hand. Pass ``qdrant=None`` to simulate storage that never opened.
     """
 
-    def client_factory(host: str) -> FakeOllamaClient:
+    def client_factory(host: str, **_: Any) -> FakeOllamaClient:
         return FakeOllamaClient(models or [], fails=ollama_fails)
 
-    monkeypatch.setattr(health_router.ollama, "Client", client_factory)
+    monkeypatch.setattr(ollama_client.ollama, "Client", client_factory)
     app = create_app()
     app.state.qdrant = FakeQdrant() if qdrant == "default" else qdrant
     return app
