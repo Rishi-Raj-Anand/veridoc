@@ -28,6 +28,9 @@ dist-ssr/
 # --- local Claude Code state (phase plans ARE tracked) ---
 .claude/settings.local.json
 
+# --- editor-local settings (per developer) ---
+.vscode/
+
 # --- misc ---
 *.log
 .DS_Store
