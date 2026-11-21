@@ -81,6 +81,7 @@ differs from the prose above, this table wins:
 | Tailwind CSS **4.3.5** | v4 is CSS-first: the `@tailwindcss/vite` plugin plus `@import "tailwindcss";` in `index.css`. **There is no `tailwind.config.js`** — theme overrides go in CSS `@theme` blocks. |
 | `react-router` **8.5.2** | since v7 `react-router` is the package to import; `react-router-dom` is a deprecated re-export |
 | Vite **8.3.8**, React **19.3.1** | current majors |
+| `email-validator` **2.4.0** | Pydantic's `EmailStr` needs it (pulls `dnspython` + `idna`); syntax-only, no DNS lookups on the request path. It rejects special-use domains such as `.local`, so **login deliberately takes a plain `str`** — the seeded admin may use `admin@veridoc.local` |
 | `ragas` **0.4.4** | kept in an optional `eval` dependency group (`uv sync --group eval`), not the default AI deps — it pulls in langchain and datasets and is only needed for task 7.2 |
 
 The frontend uses a **single `tsconfig.json`** rather than Vite's three-file project-reference
@@ -327,6 +328,7 @@ chat_sessions
 ```
 
 - Schema changes go through **Alembic migrations** only — never edit the DB by hand.
+- Invariants enforced **in the schema**, not just in code: `CHECK (role IN ('user','admin'))`, a partial unique index `uq_users_single_admin` on `role WHERE role = 'admin'` (so a second admin is impossible), `CHECK` on `documents.status`, and `PRAGMA foreign_keys=ON` on every connection (SQLite ignores FKs otherwise). Emails are stored lower-cased.
 - The admin is seeded/updated on startup from `ADMIN_EMAIL` / `ADMIN_PASSWORD`. Registration always creates `role='user'`. There is exactly one admin.
 
 ---
@@ -415,6 +417,7 @@ VITE_API_URL=http://localhost:8000
 ```
 
 Never commit `.env` files. Keep `.env.example` files up to date whenever a variable is added.
+Phase 1 (auth) needed no new variables; `JWT_SECRET` should be at least 32 bytes.
 
 ---
 
@@ -437,10 +440,13 @@ ollama pull bge-m3
 ```powershell
 cd backend
 uv sync
-uv run alembic upgrade head   # from Phase 1 onwards; no migrations exist before task 1.1
+uv run alembic upgrade head   # required once before the first run, and after pulling new migrations
 uv run uvicorn app.main:app --reload --port 8000
 ```
 
+> The backend **refuses to start** against a database with no tables and names the fix
+> (`uv run alembic upgrade head`), rather than half-working.
+>
 > The system Python on this machine is 3.14, which the project does not use. Both
 > `pyproject.toml` files pin `requires-python = ">=3.12,<3.13"` and carry a `.python-version`,
 > so `uv sync` downloads and uses its own CPython 3.12. Run every Python command through
@@ -517,7 +523,7 @@ uv run python -m ai_service.eval.run_ragas
 - Use `pathlib.Path` for all paths (Windows-safe). Never build paths with string `/` concatenation.
 - Sanitize uploaded filenames; never trust client paths.
 - `logging` module, not `print`. Log iteration count, verifier scores, and latency per chat turn. Never log passwords, tokens, or full JWTs.
-- Async endpoints; run blocking work (parsing, Qdrant local calls) via `run_in_threadpool` / `asyncio.to_thread`.
+- Async endpoints; run blocking work (parsing, Qdrant local calls) via `run_in_threadpool` / `asyncio.to_thread`. **Exception:** backend routes that use the database are plain `def` — SQLite has no async driver in this project, so FastAPI runs them in its threadpool. Routes doing real async I/O (e.g. AI-service HTTP calls) stay `async def`.
 - Prompts are Markdown files in `ai_service/prompts/`, loaded at startup. Keep them versioned and reviewed like code.
 
 ### TypeScript (frontend)
@@ -592,14 +598,14 @@ frontend 3 tests, ruff + ruff format + ESLint + tsc + prettier all clean.
 
 ### Phase 1 — Auth & data model (M2)
 
-- **1.1** `db.py`, SQLAlchemy 2.0 models `users` / `documents` / `chat_sessions`, Alembic init + initial migration.
-- **1.2** `auth_service.py`: Argon2 hash/verify, JWT encode/decode (`JWT_EXPIRE_MINUTES`).
-- **1.3** Schemas + `routers/auth.py`: `register` (always `role='user'`), `login`, `me`.
-- **1.4** `deps.py`: `get_db`, `get_current_user`, `require_admin`.
-- **1.5** Startup admin seeding from `ADMIN_EMAIL` / `ADMIN_PASSWORD` — idempotent, updates the password if the env value changed, never creates a second admin.
-- **1.6** Tests: duplicate email, wrong password, missing/expired token, user hitting an admin route → 403, registration cannot set `role`.
+- ✅ **1.1** `db.py`, SQLAlchemy 2.0 models `users` / `documents` / `chat_sessions`, Alembic init + initial migration.
+- ✅ **1.2** `auth_service.py`: Argon2 hash/verify, JWT encode/decode (`JWT_EXPIRE_MINUTES`).
+- ✅ **1.3** Schemas + `routers/auth.py`: `register` (always `role='user'`), `login`, `me`.
+- ✅ **1.4** `deps.py`: `get_db`, `get_current_user`, `require_admin`.
+- ✅ **1.5** Startup admin seeding from `ADMIN_EMAIL` / `ADMIN_PASSWORD` — idempotent, updates the password if the env value changed, never creates a second admin.
+- ✅ **1.6** Tests: duplicate email, wrong password, missing/expired token, user hitting an admin route → 403, registration cannot set `role`.
 
-**Gate:** `uv run pytest` green in `backend/`.
+**Gate: PASSED 2026-11-21.** `uv run pytest` green in `backend/` (58 tests), ruff + ruff format clean. Also verified end to end over real HTTP against a freshly migrated database: register 201 / duplicate 409 / short password 422 / `role` in body 422, login + `/me`, missing and mangled token 401, admin login, restart is a no-op, a changed `ADMIN_PASSWORD` updates the admin in place (old password rejected, still exactly one admin), and an unmigrated database refuses to boot.
 
 ### Phase 2 — Ingestion (M3)
 

@@ -38,7 +38,9 @@ def test_max_upload_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
     assert Settings(_env_file=None).max_upload_bytes == 25 * 1024 * 1024
 
 
-def test_insecure_defaults_are_reported() -> None:
+def test_insecure_defaults_are_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("JWT_SECRET", "ADMIN_PASSWORD", "INTERNAL_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
     settings = Settings(_env_file=None)
     assert set(settings.insecure_defaults) == {"JWT_SECRET", "ADMIN_PASSWORD", "INTERNAL_API_KEY"}
 
