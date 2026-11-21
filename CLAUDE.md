@@ -233,6 +233,9 @@ safety_check → condense_query → retrieve → generate → verify
 - After 3 failed verifications → `fallback`. **Never more than 3 iterations.**
 - If the best similarity score is below `MIN_RETRIEVAL_SCORE` at iteration 1, skip straight to iteration 2; if still below at iteration 3, go to `fallback` (question is outside the knowledge base).
 - Parents are de-duplicated and ordered by best child score.
+- Iteration 2 **generates even when the best score is under the gate** and lets the Verifier judge; only the *last* iteration falls back on a low score, and so does a retrieval that found nothing at all (empty knowledge base, no LLM call).
+- A `NOT_IN_DOCUMENTS` or uncited draft counts as a failed iteration (the Verifier is not called): escalate, or fall back on the last iteration.
+- The retrieval query is the question plus the **latest** `missing_info` (not an accumulation). The query vector is reused when the text is unchanged, so there is no needless `bge-m3` swap. The Generator and Verifier always see the original question.
 
 ### 6.4 Prompt budget (8,192 ctx)
 | Part | Max tokens |
@@ -412,6 +415,12 @@ MIN_RETRIEVAL_SCORE=0.35
 MAX_ITERATIONS=3
 HISTORY_MAX_MESSAGES=6
 TOP_K_PRECISION=3
+TOP_K_LEVEL2=8
+MAX_PARENTS_LEVEL2=4
+TOP_K_LEVEL3=15
+MAX_PARENTS_LEVEL3=6
+CONTEXT_MAX_TOKENS=4800
+HISTORY_MAX_TOKENS=1500
 PARENT_CHUNK_TOKENS=800
 CHILD_CHUNK_TOKENS=300
 CHILD_CHUNK_OVERLAP_TOKENS=50
@@ -656,22 +665,32 @@ gate, and the Generator's `NOT_IN_DOCUMENTS` sentinel sent it to the exact fallb
 reusing a session got 403, and a stopped AI service gave the friendly 503. `ollama ps`: `qwen3:8b`
 6.2 GB, 100% GPU at `num_ctx=8192`.
 
-**Interim until Phase 4:** there is no Verifier yet, so `status="verified"` means "passed the three
-code guards" (retrieval score gate, no `NOT_IN_DOCUMENTS`, at least one valid `[n]`), not an audited
-answer. Phase 4 puts `verify` and `escalate` between these nodes.
-
 ### Phase 4 — Verifier & escalation (M5)
 
-- **4.1** `prompts/verifier.md` + the §6.5 JSON schema as a Pydantic model.
-- **4.2** `agents/verifier.py` — `format=<schema>`, temperature 0, audits the draft against the **retrieved context only**; parse failure → one retry → treat as `fail`.
-- **4.3** Pass rule computed in code (`verdict` **and** both thresholds **and** empty `unsupported_claims`).
-- **4.4** Escalation in `retriever.py` — level 2 (Top-8 → ≤ 4 parents), level 3 (Top-15 → ≤ 6 parents), parents de-duplicated and ordered by best child score; low score at iteration 1 → jump to 2; still low at 3 → fallback.
-- **4.5** Graph `escalate` (iteration += 1, append `missing_info` to the retrieval query) + `fallback` nodes with conditional edges; hard cap at `MAX_ITERATIONS`.
-- **4.6** Prompt-budget trimmer per §6.4 (history first, then lowest-scoring context, never the system prompt).
-- **4.7** Tests with a mocked LLM: pass-rule truth table, 3 fails → exact fallback text, routing on low retrieval score, iteration never exceeds 3, malformed-JSON path.
-- **4.8** Calibration pass — `FAITHFULNESS_THRESHOLD`, `RELEVANCE_THRESHOLD` and `MIN_RETRIEVAL_SCORE` defaults in §11 are starting guesses. Measure on ~10 real questions and record the chosen values here. A local 8B verifier tends to be lenient, so expect to adjust. Also decide here whether the §6.8 latency is acceptable or the `qwen3:4b` escape hatch is needed.
+- ✅ **4.1** `prompts/verifier.md` + the §6.5 JSON schema as a Pydantic model.
+- ✅ **4.2** `agents/verifier.py` — `format=<schema>`, temperature 0, audits the draft against the **retrieved context only**; parse failure → one retry → treat as `fail`.
+- ✅ **4.3** Pass rule computed in code (`verdict` **and** both thresholds **and** empty `unsupported_claims`).
+- ✅ **4.4** Escalation in `retriever.py` — level 2 (Top-8 → ≤ 4 parents), level 3 (Top-15 → ≤ 6 parents), parents de-duplicated and ordered by best child score; low score at iteration 1 → jump to 2; still low at the last iteration → fallback.
+- ✅ **4.5** Graph `escalate` (iteration += 1, append `missing_info` to the retrieval query) + `fallback` nodes with conditional edges; hard cap at `MAX_ITERATIONS`.
+- ✅ **4.6** Prompt-budget trimmer per §6.4 (history first, then lowest-scoring context, never the system prompt).
+- ✅ **4.7** Tests with a mocked LLM: pass-rule truth table, 3 fails → exact fallback text, routing on low retrieval score, iteration never exceeds 3, malformed-JSON path.
+- ✅ **4.8** Calibration pass — `FAITHFULNESS_THRESHOLD`, `RELEVANCE_THRESHOLD` and `MIN_RETRIEVAL_SCORE` defaults in §11 are starting guesses. Measure on ~10 real questions and record the chosen values here. A local 8B verifier tends to be lenient, so expect to adjust. Also decide here whether the §6.8 latency is acceptable or the `qwen3:4b` escape hatch is needed.
 
-**Gate:** a question answerable only from a parent chunk reaches it by iteration 2; an off-corpus question returns the fallback and never a guess.
+**Gate: PASSED 2026-11-21.** A question answerable only from a parent chunk reaches it by iteration 2; an off-corpus question returns the fallback and never a guess.
+
+**Status 2026-11-21:** 4.1–4.8 built; AI 180 tests (+4 live behind `-m ollama`), backend 148 tests, ruff clean. Live calibration in-process on a throwaway `DATA_DIR` (real `qwen3:8b` + `bge-m3`; `disease.md` plus a synthetic migraine document, 12 questions):
+
+| Kind | Result |
+|---|---|
+| 6 in-corpus + 2 short queries | all `verified` at iteration 1, faithfulness 1.00 / relevance 1.00; best scores 0.53–0.66; 11–19 s per turn |
+| Parent-only ("migraine in children") | probe: answer text **absent** from level-1 context, present at level 2. Iteration 1 failed the audit (faithfulness 0.50), iteration 2 passed from the parent and cited it; 35 s |
+| Off-corpus, France (0.32) | `low_score` → `not_covered` → `low_score` → exact fallback; 14 s |
+| Off-corpus, car brakes (0.41, over the gate) | `not_covered` ×3 → exact fallback; 15 s |
+| Dosage the sources do not state (paracetamol for a 5-year-old) | Verifier rejected the draft (faithfulness 0.00), then fallback; never a guess; 31 s |
+
+**Calibration decisions.** The Verifier is bimodal: good drafts scored 1.00/1.00 and every bad one ≤ 0.50, so `FAITHFULNESS_THRESHOLD=0.85`, `RELEVANCE_THRESHOLD=0.75` and `MIN_RETRIEVAL_SCORE=0.35` sit well clear of both and are **unchanged**. `MIN_RETRIEVAL_SCORE` separates France (0.32) from the lowest in-corpus score (0.53); anything between is judged by the sentinel and the Verifier. The one question not re-measured is the short factual query from Phase 2 (0.276 on the résumé PDF).
+
+**Latency decision.** One iteration takes 11–19 s and two take about 30–35 s including model swaps, so a full 3-iteration worst case is extrapolated at roughly 50–60 s (not measured directly): inside the §6.8 budget of 30–90 s and the 300 s backend timeout. The `qwen3:4b` escape hatch is **not needed**; §3 and §11 are unchanged. Largest prompt seen: 2,414 tokens, against the ~7,000 budget.
 
 ### Phase 5 — Session memory & safety (M6)
 
@@ -719,6 +738,10 @@ After Phase 1 the seams are clean enough to work in parallel:
 - **Citation numbers are one per `(filename, page)`**: chunks from the same page share a number, assigned in best-score order, and `citations` lists only the numbers the answer uses. Markers that point at no source are stripped from the text.
 - **Phase 3 guards fall back instead of guessing:** no chunk reaching `MIN_RETRIEVAL_SCORE` (the LLM is not called), the `NOT_IN_DOCUMENTS` sentinel, or no valid `[n]` all return the §7.4 fallback.
 - **`VectorStore` serialises every Qdrant call with a lock, and chat turns run one at a time** (one model in VRAM, §6.8). The fallback and disclaimer text live as constants in `ai_service/config.py`.
+- **Verifier replies that are not valid JSON for the schema** (including scores outside 0–1) are retried once, then count as a failed audit. An `OllamaError` is not a failed audit: it propagates to a 503.
+- **`MAX_ITERATIONS` is validated to 1–3** at startup, because §6.3 defines exactly three levels.
+- **Parent sources are cited at the parent's first page**, one `[n]` per `(filename, page_start)`; a parent missing from the docstore degrades to its child chunks with a warning.
+- **`PipelineResult` also carries `iterations`, `attempts` and `sources`** for transcripts (5.1) and evaluation (7.x). The §9 `ChatResponse` body is unchanged.
 
 - **Ingest is idempotent per `doc_id`** and embeds everything *before* writing, so a failed embed leaves the previous index intact; a write failure rolls both stores back for that id.
 - **The AI service ingests only files inside `data/uploads/`** (anything else → 400), and serialises ingest/delete behind one lock.

@@ -2,12 +2,12 @@
 
 | | |
 |---|---|
-| **Status** | 📝 **Planned — not started** |
+| **Status** | ✅ **Built, gate passed 2026-11-21** (merge pending) |
 | **Branch** | `feature/phase-4-verifier` |
 | **Tasks** | 4.0 – 4.8 |
 | **Gate** | A question answerable only from a parent chunk reaches it by iteration 2; an off-corpus question returns the fallback and never a guess |
 | **Touches** | `ai/` only, plus `CLAUDE.md`. No backend or frontend changes: the §9 `ChatResponse` contract is unchanged |
-| **Record** | At 4.0, copy this plan to `.claude/plans/phase_4_verifier_escalation.md` and fill in results as tasks land (same convention as Phases 0–3) |
+| **Record** | Copied to `.claude/plans/phase_4_verifier_escalation.md` at 4.0; results filled in below (same convention as Phases 0–3) |
 
 ## Context
 
@@ -185,3 +185,37 @@ Live gate, on a throwaway `DATA_DIR` with both services on 18000/18001:
 - **Lenient or harsh 8B Verifier:** it may pass everything, or flag advice such as "consult a doctor" as unsupported. The 4.8 calibration and prompt wording address this. Fallback is always the safe outcome.
 - **Latency:** each iteration adds a Verifier call, and each escalation adds a model swap. The worst case is roughly 60–90 s, which is inside the 300 s backend and Ollama timeouts but must be measured at 4.8.
 - **Off-corpus cost:** with the literal §6.3 gate, off-corpus questions now spend one generate round before they fall back. This was accepted when the gate rule was chosen.
+
+## Result (2026-11-21)
+
+**Tasks 4.1 – 4.8 built.** AI service 180 tests (+4 live behind `-m ollama`), backend 148 tests, `ruff check` and `ruff format --check` clean. Commits: `fd3761a` plan, `139be90` code 4.1–4.7.
+
+**Live calibration** (in-process on a throwaway `DATA_DIR`, real `qwen3:8b` + `bge-m3`, `disease.md` + a synthetic migraine document):
+
+| Question | Best score | Attempts | Latency |
+|---|---|---|---|
+| Malaria / TB / common cold / aspirin-dengue / hypertension / typhoid | 0.55 / 0.66 / 0.60 / 0.56 / 0.57 / 0.58 | `pass` at iteration 1 (1.00 / 1.00) | 11–19 s |
+| "dengue medicine", "cold cure" (short) | 0.58 / 0.53 | `pass` at iteration 1 | 15–18 s |
+| Capital of France | 0.32 | `low_score`, `not_covered`, `low_score` → fallback | 14 s |
+| Car brakes | 0.41 | `not_covered` ×3 → fallback | 15 s |
+| Paracetamol dose, 5-year-old | 0.51–0.53 | `fail` (faithfulness 0.00), `not_covered` ×2 → fallback | 31 s |
+| Migraine in children (parent-only) | 0.65 | `fail` (0.50), `pass` at iteration 2 from the parent | 35 s |
+
+The parent-only gate was first run against a 2-chunk synthetic document and passed at iteration 1, which proved nothing: the answer chunk was inside the Top-3. The document was lengthened and a probe confirmed the answer text is absent from level-1 context and present at level 2 before the run above was accepted.
+
+**Calibration outcome.** Thresholds unchanged (0.85 / 0.75 / 0.35): the Verifier is bimodal (1.00 vs ≤ 0.50). The `qwen3:4b` escape hatch is not needed: one iteration is 11–19 s, two are 30–35 s, and the 3-iteration worst case (~50–60 s) is extrapolated, not measured. Largest prompt: 2,414 tokens.
+
+### Deviations from the plan
+| Planned | Actual | Why |
+|---|---|---|
+| Gate: low score at iteration 2 always generates | A retrieval with **no sources at all** goes straight to fallback | An empty knowledge base would otherwise call the Generator on an empty context |
+| Synthetic gate document of 2 chunks | 4+ chunks with the answer in the last paragraph | The 2-chunk version put the answer inside the Top-3, so it never escalated |
+
+### Carry-forward notes
+| For | Note |
+|---|---|
+| 5.2 condenser | `retrieve` sets `query = state.get("query") or message`; the condenser should set `query` before it. `trim_history` exists and is tested but not wired in yet |
+| 5.1 transcripts | `PipelineResult.attempts` / `iterations` / `sources` hold what §6.7 wants to store (scores never shown to users) |
+| 5.3 safety | `emergency` is still always `false`; the notice is prefixed at the end of the turn, after `finalize` |
+| 7.3 ablation | single-pass without the Verifier can be had with `MAX_ITERATIONS=1` plus a verifier stub, or by calling `Generator` directly |
+| running services | the AI service on `:8001` runs without `--reload`, so it must be restarted to pick up Phase 4 |
