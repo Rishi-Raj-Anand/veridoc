@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| **Status** | ✅ **Built; gate passed 2026-11-21** (not yet merged to `main`) |
-| **Branch** | `feature/phase-5-memory-safety` |
+| **Status** | ✅ **Complete — gate passed and merged to `main` 2026-11-21** (merge `3f4d305`) |
+| **Branch** | `feature/phase-5-memory-safety` (merged, then deleted) |
 | **Tasks** | 5.0 – 5.7 (5.0 housekeeping, 5.7 live gate) |
 | **Gate (new, added to §17)** | A two-turn conversation over HTTP: the follow-up is condensed into a standalone question and answered `verified`. A red-flag message comes back with `emergency=true` and the §7.2 notice prefixed. The transcript on disk holds both exchanges with scores |
 | **Touches** | `ai/` only, plus `CLAUDE.md`. Backend and frontend unchanged: the §9 `ChatResponse` body is unchanged |
@@ -167,7 +167,7 @@ Then the 5.7 live gate. Afterwards, restart the real AI service on `:8001`, sinc
 
 ## Result (2026-11-21)
 
-**Tasks 5.1 – 5.6 built.** AI service 340 tests (+5 live behind `-m ollama`, all passing against real Ollama), backend 148 tests, `ruff check` and `ruff format --check` clean in both. No backend or frontend changes; the §9 `ChatResponse` body is unchanged. Commits: `ffb85a4` plan, `ad3e492` transcript store, `4018a96` safety check, `5c9674a` condenser + pipeline wiring, then the docs commit.
+**Tasks 5.1 – 5.6 built.** AI service 340 tests (+5 live behind `-m ollama`, all passing against real Ollama), backend 148 tests, `ruff check` and `ruff format --check` clean in both. No backend or frontend changes; the §9 `ChatResponse` body is unchanged. Commits: `ffb85a4` plan, `ad3e492` transcript store, `4018a96` safety check, `5c9674a` condenser + pipeline wiring, `0a2b6ec` docs + gate result, merged as `3f4d305`.
 
 **Live gate** (real `qwen3:8b` + `bge-m3`, throwaway `DATA_DIR`, AI service on :18001, `disease.md` + a synthetic 3-section migraine document):
 
@@ -194,4 +194,16 @@ Transcripts on disk held every exchange with `standalone_query`, `emergency`, `i
 |---|---|
 | Phase 6 | `emergency` and the notice text are in the response; the banner should key off `emergency`, and may avoid repeating the notice text if it is already the first line of `answer` |
 | Phase 7 | `run_turn(..., store=None)` gives the stateless pipeline run the eval needs |
-| running services | The AI service on `:8001` runs without `--reload`: **restart it** to pick up Phase 5. It was not touched here |
+| running services | Done at close-out: the AI service on `:8001` was restarted on the Phase 5 code |
+
+## Close-out (2026-11-21)
+
+**Final state of `main`:** merge `3f4d305` (feature commits `ffb85a4`, `ad3e492`, `4018a96`, `5c9674a`, `0a2b6ec`). AI service 340 tests (+5 live behind `-m ollama`, passing against real Ollama), backend 148 tests, `ruff check` and `ruff format --check` clean in both, re-run on `main` after the merge. Only `main` remains: the feature branch was deleted, there are no stashes and no remotes.
+
+**Completeness check:** every file named in tasks 5.1-5.6 exists, §17 shows 5.1-5.6 ticked with the gate line, no new environment variables were needed (`HISTORY_MAX_MESSAGES` and `HISTORY_MAX_TOKENS` already existed, so both `.env.example` files are unchanged), and no TODO/FIXME markers were left in `ai_service/`.
+
+**Servers:** the AI service on `:8001` (no `--reload`) was restarted on the Phase 5 code from the Claude Code session. `/internal/health` is `ok` (Ollama, both models, Qdrant on the real `data/vectors`), it returns 401 without the key, and the backend on `:8000` reports `ok` through it. As in Phase 4, it was started from the Claude Code session, not from the developer's own terminal.
+
+**Clean-up performed:** the gate driver, probe scripts, throwaway `DATA_DIR` and logs were removed from the scratch area; ports 18000/18001 are free; the developer's real `data/` (`chats/` still empty) and `documents/` were not touched; the plan-mode draft was removed from `~/.claude/plans/`.
+
+**Not done here:** a live chat against the real `data/` (no documents are indexed there yet, so a question would fall back until one is uploaded). The two open Verifier-strictness findings above stay open for Phase 7/8.
