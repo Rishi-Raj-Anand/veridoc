@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| **Status** | ✅ **Complete 2026-11-21 — gate passed, on `feature/6b-intent-routing`, not yet merged** |
-| **Branch** | `feature/6b-intent-routing` from `main` (`ecaf2ba`) |
+| **Status** | ✅ **Complete — gate passed and merged to `main` 2026-11-21** (merge `20033eb`) |
+| **Branch** | `feature/6b-intent-routing` from `main` (`ecaf2ba`), merged, then deleted |
 | **Touches** | `ai/`, `backend/`, `frontend/`, `CLAUDE.md`. **No new dependencies.** |
 | **Record** | Copy this plan to `.claude/plans/phase_6b_intent_routing.md` at 6B.0, and fill in the results at the end |
 | **Order** | Lands **before Phase 7**, because the eval must measure the pipeline that ships |
