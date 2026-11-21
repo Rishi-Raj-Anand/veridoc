@@ -169,6 +169,7 @@ veridoc/
     │   ├── main.py
     │   ├── config.py
     │   ├── security.py        # X-Internal-Key check
+    │   ├── deps.py            # FastAPI deps exposing the objects lifespan builds
     │   ├── routers/           # ingest.py, chat.py, health.py
     │   ├── ingestion/         # parsers.py, chunker.py, indexer.py
     │   ├── retrieval/         # vector_store.py, docstore.py, retriever.py
@@ -188,7 +189,7 @@ veridoc/
 ### 6.1 Ingestion (admin upload)
 1. Backend receives the upload, validates extension (`.pdf .txt .md .docx`) and size (`MAX_UPLOAD_MB`), computes SHA-256, rejects duplicates, saves to `data/uploads/`, inserts a `documents` row with `status="pending"`.
 2. Backend (FastAPI `BackgroundTasks`) calls AI `POST /internal/ingest` with a long timeout.
-3. AI service parses to text **with page numbers** (PDF pages; DOCX/TXT/MD → page 1 or section index). If a PDF yields almost no text, fail with `"scanned or image-only PDF is not supported"`.
+3. AI service parses to text **with page numbers** (PDF pages; DOCX/MD → a heading-based **section index**: section 1 until the first heading, then one per Heading 1/2 or `#`/`##`; TXT, or any file without headings → page 1). If a PDF yields almost no text, fail with `"scanned or image-only PDF is not supported"`.
 4. **Chunking (parent–child):**
    - Parent chunks ≈ **800 tokens**, split on paragraph/heading boundaries where possible.
    - Child chunks ≈ **300 tokens** with **50 token overlap**, each linked to its `parent_id`.
@@ -342,9 +343,9 @@ chat_sessions
 | POST | `/api/auth/login` | — | `{email, password}` → `{access_token, token_type, role}` |
 | GET | `/api/auth/me` | user | current user |
 | POST | `/api/chat/message` | user | `{session_id, message}` → `ChatResponse` |
-| POST | `/api/admin/documents` | admin | multipart upload → document (status `pending`) |
+| POST | `/api/admin/documents` | admin | multipart upload → document (status `pending`). Rejections: **415** wrong extension or content not matching it, **413** over `MAX_UPLOAD_MB`, **422** empty, **409** duplicate SHA-256 |
 | GET | `/api/admin/documents` | admin | list documents with status |
-| DELETE | `/api/admin/documents/{id}` | admin | delete file + vectors |
+| DELETE | `/api/admin/documents/{id}` | admin | delete file + vectors + row → 204. **409** while the document is `pending`; **503** (nothing removed) if the AI service cannot delete its index |
 | GET | `/api/health` | — | backend + AI service health |
 
 `ChatResponse`:
@@ -362,7 +363,7 @@ chat_sessions
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/internal/ingest` | `{doc_id, file_path, filename}` → `{chunk_count}` |
-| DELETE | `/internal/documents/{doc_id}` | remove vectors + parents |
+| DELETE | `/internal/documents/{doc_id}` | remove vectors + parents → `{deleted_points, deleted_parents}`; idempotent |
 | POST | `/internal/chat` | `{session_id, user_id, message}` → `ChatResponse` |
 | GET | `/internal/health` | Ollama reachable, models pulled, Qdrant open |
 
@@ -409,7 +410,13 @@ RELEVANCE_THRESHOLD=0.75
 MIN_RETRIEVAL_SCORE=0.35
 MAX_ITERATIONS=3
 HISTORY_MAX_MESSAGES=6
+PARENT_CHUNK_TOKENS=800
+CHILD_CHUNK_TOKENS=300
+CHILD_CHUNK_OVERLAP_TOKENS=50
+EMBED_DIM=1024
 ```
+
+The last four describe the shape of what is already indexed: changing any of them means re-ingesting every document (an `EMBED_DIM` mismatch makes the AI service refuse to start and names the fix).
 
 `frontend/.env`:
 ```
@@ -611,18 +618,20 @@ frontend 3 tests, ruff + ruff format + ESLint + tsc + prettier all clean.
 
 Build the AI side first (testable standalone), then wire the backend.
 
-- **2.1** `ingestion/parsers.py` — PyMuPDF with real page numbers; `python-docx`; TXT/MD → page 1 / section index. Near-zero text PDF → `"scanned or image-only PDF is not supported"`.
-- **2.2** `ingestion/chunker.py` — parents ≈ 800 tokens on paragraph/heading boundaries; children ≈ 300 tokens / 50 overlap carrying `parent_id`; `len(text) / 4` estimator.
-- **2.3** `retrieval/vector_store.py` — one embedded `QdrantClient(path=...)` as a module singleton (single process only), collection `chunks`, **vector size 1024 + cosine**, payload per §6.1.5, delete-by-`doc_id` filter.
-- **2.4** `retrieval/docstore.py` — SQLite parents keyed by `parent_id`.
-- **2.5** `llm/ollama_client.py` — the **only** module that calls `ollama`: `embed()` + `chat()`, always `options={num_ctx, temperature}`, `think=False`, `keep_alive="30m"`, batched embedding, retry + timeout.
-- **2.6** `ingestion/indexer.py` + `routers/ingest.py` — `POST /internal/ingest` → `{chunk_count}`, `DELETE /internal/documents/{doc_id}`; blocking work via `asyncio.to_thread`.
-- **2.7** Backend `services/document_service.py` — extension + `MAX_UPLOAD_MB` check, SHA-256 dedupe (409), filename sanitization, save as `<doc_id>_<safe_name>`, row with `status="pending"`.
-- **2.8** Backend `services/ai_client.py` — httpx + `X-Internal-Key`, long timeout for ingest, AI failures → 503 with a friendly message.
-- **2.9** Backend `routers/admin.py` — upload (+ `BackgroundTasks` → ingest → `ready` / `failed` + `error`), list, delete (file + Qdrant points + docstore parents + row).
-- **2.10** Tests: one fixture per file type, chunker invariants (sizes, overlap, parent links), upload validation matrix, admin-only guards.
+- ✅ **2.1** `ingestion/parsers.py` — PyMuPDF with real page numbers; `python-docx`; DOCX/MD → heading-based section index, TXT → page 1. Near-zero text PDF → `"scanned or image-only PDF is not supported"`.
+- ✅ **2.2** `ingestion/chunker.py` — parents ≈ 800 tokens on paragraph/heading boundaries; children ≈ 300 tokens / 50 overlap carrying `parent_id`; `len(text) / 4` estimator.
+- ✅ **2.3** `retrieval/vector_store.py` — one embedded `QdrantClient(path=...)` as a module singleton (single process only), collection `chunks`, **vector size 1024 + cosine**, payload per §6.1.5, delete-by-`doc_id` filter.
+- ✅ **2.4** `retrieval/docstore.py` — SQLite parents keyed by `parent_id`.
+- ✅ **2.5** `llm/ollama_client.py` — the **only** module that calls `ollama`: `embed()` + `chat()`, always `options={num_ctx, temperature}`, `think=False`, `keep_alive="30m"`, batched embedding, retry + timeout.
+- ✅ **2.6** `ingestion/indexer.py` + `routers/ingest.py` — `POST /internal/ingest` → `{chunk_count}`, `DELETE /internal/documents/{doc_id}`; blocking work via `asyncio.to_thread`.
+- ✅ **2.7** Backend `services/document_service.py` — extension + `MAX_UPLOAD_MB` check, SHA-256 dedupe (409), filename sanitization, save as `<doc_id>_<safe_name>`, row with `status="pending"`.
+- ✅ **2.8** Backend `services/ai_client.py` — httpx + `X-Internal-Key`, long timeout for ingest, AI failures → 503 with a friendly message.
+- ✅ **2.9** Backend `routers/admin.py` — upload (+ `BackgroundTasks` → ingest → `ready` / `failed` + `error`), list, delete (file + Qdrant points + docstore parents + row).
+- ✅ **2.10** Tests: one fixture per file type, chunker invariants (sizes, overlap, parent links), upload validation matrix, admin-only guards.
 
 **Gate:** uploading a real PDF via `/api/admin/documents` flips the status to `ready` with a sane `chunk_count`; delete removes its points and parents.
+
+**Status 2026-11-21:** 2.1–2.10 built; AI 76 tests, backend 128 tests, ruff clean. Live smoke on a throwaway `DATA_DIR` with real `bge-m3`: a synthetic 4-page PDF → `ready` (12 chunks, 4 parents, pages 1–4), DOCX and MD → `ready`, an image-only PDF → `failed` with the exact scanned-PDF message, `.png` 415, duplicate 409, anonymous 401, delete removed points + parents + file. `bge-m3` at `num_ctx=8192` sits at 689 MB, 100% GPU (matches §2). **Still open:** the gate run with a real medical PDF (needs a file from the team).
 
 ### Phase 3 — Single-pass pipeline (M4)
 
@@ -690,6 +699,11 @@ After Phase 1 the seams are clean enough to work in parallel:
 - Freeze the shared contracts in Phase 0 so both tracks can mock the other: `ChatResponse` and the `/internal/ingest` + `/internal/chat` bodies (§9). Do not change them without telling the other track.
 
 ### Settled decisions
+
+- **Ingest is idempotent per `doc_id`** and embeds everything *before* writing, so a failed embed leaves the previous index intact; a write failure rolls both stores back for that id.
+- **The AI service ingests only files inside `data/uploads/`** (anything else → 400), and serialises ingest/delete behind one lock.
+- **A backend restart marks stale `pending` documents `failed`** ("ingestion was interrupted by a backend restart"), since the background task dies with the process; the admin deletes and re-uploads.
+- **Deleting a `pending` document is refused (409)**, and delete asks the AI service first, so a row never outlives vectors it could no longer clean up.
 
 - `CLAUDE.md` lives at the **repository root**.
 - The AI service runs **without `--reload`** (see §12) because of the Qdrant storage lock.

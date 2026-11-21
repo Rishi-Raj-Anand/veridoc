@@ -156,3 +156,35 @@ Manual gate (three terminals: Ollama running, AI service without `--reload`, bac
 - **`num_ctx` on `bge-m3`** may change its VRAM residency vs the §2 measurement — check `ollama ps` at the gate.
 - **Qdrant local mode payload indexes are no-ops**; delete-by-filter scans — fine at this corpus size.
 - **BackgroundTasks under `ASGITransport`**: tests assume the task completes before the response returns; if not, the tests call `run_ingest` directly.
+
+## Result (2026-11-21)
+
+**Tasks 2.1 – 2.10 built.** AI service 76 tests (+1 live test behind `-m ollama`, passing), backend
+128 tests, `ruff check` and `ruff format --check` clean in both. Commits: `075be7c` plan ·
+`a1e73ac` 2.1–2.2 · `1b7a155` 2.3–2.5 · `c82547d` 2.6 · `ce4d93c` 2.7–2.10.
+
+**Live smoke** (both services on spare ports 18000/18001, throwaway `DATA_DIR`, real `bge-m3`):
+synthetic 4-page PDF → `ready`, 12 children / 4 parents, pages 1–4, embed 8.0 s (includes the
+model load); DOCX and MD → `ready` with section-index pages; image-only PDF → `failed` with
+`scanned or image-only PDF is not supported`; `.png` 415; duplicate 409; anonymous 401; delete
+removed the file, the docstore parents (4 → 0) and the vectors (log: `points=12 parents=4`).
+`ollama ps`: `bge-m3` 689 MB, 100% GPU at `num_ctx=8192`.
+
+**Gate: still open** — the run with a real medical PDF, supplied by the team.
+
+### Deviations from the plan
+
+| Planned | Actual | Why |
+|---|---|---|
+| no new AI modules beyond §5 | added `ai_service/deps.py` | one home for the `app.state` getters that Phase 3's chat router also needs |
+| `list_models` shares the retry policy | single quick attempt, 5 s timeout | health must answer fast when Ollama is down; retries (1 s + 3 s) would make it slow |
+| health keeps its own `ollama.Client` call | health goes through `OllamaClient.list_models` | §6.6: no `ollama` import outside `llm/ollama_client.py`; tests now patch `ollama_client.ollama.Client` |
+| ingest lock as a module global | `asyncio.Lock` on `app.state`, created in `create_app` | avoids binding a lock to the wrong event loop across tests |
+| `import fitz` | `import pymupdf` | `fitz` is deprecated in PyMuPDF 2.x and emitted a `FutureWarning` |
+| delete route a plain `def` | `async def` with DB work in `run_in_threadpool` | it awaits the AI service call (§14: real async I/O stays `async`) |
+| smoke on ports 8000/8001 | ports 18000/18001 | 8000/8001 were occupied by the developer's own running services, which were left untouched |
+
+### Next
+
+Run the gate with a real PDF, then Phase 3 (single-pass pipeline): `retriever.py` can read
+`VectorStore` / `Docstore.get_parents` directly, and `OllamaClient.chat` already exists.
