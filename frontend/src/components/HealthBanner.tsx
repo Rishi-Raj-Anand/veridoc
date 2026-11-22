@@ -5,6 +5,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 
+import { ApiError, NO_RESPONSE } from "../api/client";
 import { getHealth } from "../api/health";
 
 function Pill({ ok, label }: { ok: boolean; label: string }) {
@@ -31,9 +32,16 @@ export function HealthBanner() {
   if (isPending) {
     content = <p className="text-sm text-slate-500">Checking services…</p>;
   } else if (error !== null) {
-    content = <p className="text-sm text-red-700">Backend unreachable: {error.message}</p>;
+    // Only a call that got no answer means the backend itself is down.
+    const unreachable = error instanceof ApiError && error.status === NO_RESPONSE;
+    content = (
+      <p className="text-sm text-red-700">
+        {unreachable ? `Backend unreachable: ${error.message}` : error.message}
+      </p>
+    );
   } else {
     const ai = data.ai_service;
+    const chunks = ai?.knowledge_base?.chunks ?? null;
     content = (
       <div className="space-y-2">
         <div className="flex flex-wrap gap-2">
@@ -55,8 +63,28 @@ export function HealthBanner() {
           )}
         </div>
         {data.error !== null && <p className="text-sm text-amber-700">{data.error}</p>}
-        {ai !== null && ai.models.missing.length > 0 && (
-          <p className="text-sm text-amber-700">Missing models: {ai.models.missing.join(", ")}</p>
+        {ai !== null && ai.ollama.error !== null && (
+          <p className="text-sm text-amber-700">
+            Ollama: {ai.ollama.error}. Start the Ollama app or run <code>ollama serve</code>.
+          </p>
+        )}
+        {ai !== null && ai.ollama.ok && ai.models.missing.length > 0 && (
+          <ul className="space-y-0.5 text-sm text-amber-700">
+            {ai.models.missing.map((model) => (
+              <li key={model}>
+                Model {model} is not pulled. Run <code>ollama pull {model}</code>.
+              </li>
+            ))}
+          </ul>
+        )}
+        {ai !== null && ai.qdrant.error !== null && (
+          <p className="text-sm text-amber-700">Vector store: {ai.qdrant.error}</p>
+        )}
+        {chunks === 0 && (
+          <p className="text-sm text-amber-700">
+            No documents indexed — Doctor AI will refuse every medical question. Upload a reference
+            document below.
+          </p>
         )}
       </div>
     );

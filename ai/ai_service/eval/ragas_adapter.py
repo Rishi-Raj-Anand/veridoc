@@ -53,7 +53,11 @@ class OllamaRagasLLM(BaseRagasLLM):
         text = prompt.to_string()
         temp = 0.0 if n <= 1 or temperature is None else float(temperature)
         generations = [
-            Generation(text=self.client.chat([{"role": "user", "content": text}], temperature=temp))
+            Generation(
+                text=self.client.chat(
+                    [{"role": "user", "content": text}], temperature=temp, purpose="judge"
+                )
+            )
             for _ in range(max(1, n))
         ]
         return LLMResult(generations=[generations])

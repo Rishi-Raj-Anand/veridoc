@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Link } from "react-router";
 
-import { ApiError } from "../api/client";
+import { errorMessage } from "../api/client";
 import { AuthCard } from "../components/AuthCard";
 import { useAuth } from "../hooks/useAuth";
 
@@ -20,7 +20,7 @@ export function LoginPage() {
     try {
       await login(email.trim(), password);
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not reach the server.");
+      setError(errorMessage(caught));
       setPending(false);
     }
   }

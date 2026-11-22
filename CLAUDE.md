@@ -131,6 +131,8 @@ veridoc/
 ├── CLAUDE.md
 ├── README.md
 ├── start.md                 # how to set up, start, check and stop every service
+├── check.ps1                # runs every §12 quality check, PASS/FAIL table, exit 1 on failure
+├── docs/report/             # report assets: diagrams, metrics.md, SVG charts, screenshots
 ├── .gitignore                 # must ignore data/, .env, .venv/, node_modules/
 ├── .gitattributes             # * text=auto
 ├── data/                      # runtime data, gitignored (created on startup)
@@ -157,6 +159,7 @@ veridoc/
 │   ├── alembic/
 │   ├── app/
 │   │   ├── main.py            # app factory, startup (create dirs, seed admin)
+│   │   ├── middleware.py      # early 413 from Content-Length, JSON 500 inside CORS
 │   │   ├── config.py          # pydantic-settings
 │   │   ├── db.py
 │   │   ├── models/            # SQLAlchemy models
@@ -174,7 +177,7 @@ veridoc/
     │   ├── config.py
     │   ├── security.py        # X-Internal-Key check
     │   ├── deps.py            # FastAPI deps exposing the objects lifespan builds
-    │   ├── routers/           # ingest.py, chat.py, health.py
+    │   ├── routers/           # ingest.py, chat.py, health.py, errors.py (X-Error-Code)
     │   ├── ingestion/         # parsers.py, chunker.py, indexer.py
     │   ├── retrieval/         # vector_store.py, docstore.py, retriever.py
     │   ├── agents/            # generator, verifier, condenser, safety, classifier, smalltalk
@@ -183,7 +186,8 @@ veridoc/
     │   ├── llm/               # ollama_client.py (single wrapper for all calls)
     │   ├── memory/            # chat_store.py (data/chats)
     │   ├── runtime.py         # builds stores + agents + pipeline; shared by main.py and the eval
-    │   └── eval/              # testset.py, testset.jsonl (+ .example), ragas_adapter.py, run_ragas.py
+    │   └── eval/              # testset.py, testset.jsonl (+ .example), ragas_adapter.py, run_ragas.py,
+    │                          # report.py (docs/report tables + SVG charts, stdlib only)
     └── tests/
 ```
 
@@ -287,7 +291,8 @@ If the JSON fails to parse/validate, retry once, then treat as `fail`.
 - Backend records `(session_id, user_id)` on the first message and rejects use of another user's session.
 - AI service stores each turn in `data/chats/<session_id>.json`:
   `{session_id, user_id, created_at, turns: [{role, content, standalone_query, status, iterations, citations, verifier_scores, timestamp}]}`.
-- Each exchange adds **two** entries: the `user` one (`content`, `timestamp`) and the `assistant` one (`content` exactly as shown, notice included, plus `standalone_query`, `status`, `emergency`, `iterations`, `citations`, `verifier_scores` = the per-iteration attempts, `timestamp`).
+- Each exchange adds **two** entries: the `user` one (`content`, `timestamp`) and the `assistant` one (`content` exactly as shown, notice included, plus `standalone_query`, `status`, `emergency`, `iterations`, `citations`, `verifier_scores` = the per-iteration attempts, `llm_calls`, `timestamp`).
+- Each attempt carries `seconds` (retrieve start to the end of that iteration's guard or audit); outcome `empty_kb` means nothing was indexed, so the turn fell back without embedding. `llm_calls` lists every Ollama call of the turn: `{purpose, model, prompt_tokens, completion_tokens, seconds}`, with purpose `classify`, `smalltalk`, `condense`, `generate`, `verify` or `embed` (Phase 8.4).
 - Write the transcript atomically (temp file in the same directory, fsync, then `os.replace`, retried briefly on Windows `PermissionError`). A corrupt transcript is renamed `<id>.json.corrupt-<ts>` and the session starts fresh. The AI service also raises 403 when a transcript's `user_id` differs from the request's.
 - History for the condenser is the last `HISTORY_MAX_MESSAGES` entries within `HISTORY_MAX_TOKENS`, with the emergency notice stripped.
 - Scores and iteration counts are stored for evaluation but **never shown to users**.
@@ -399,6 +404,7 @@ chat_sessions
 | POST | `/api/chat/message` | user | `{session_id, message}` → `ChatResponse`. `message` is 1–2000 characters. Any signed-in user may chat, the admin included. **401** anonymous, **403** a session owned by another user, **422** bad UUID / empty / over-long message, **503** (friendly text) when the AI service fails |
 | POST | `/api/admin/documents` | admin | multipart upload → document (status `pending`). Rejections: **415** wrong extension or content not matching it, **413** over `MAX_UPLOAD_MB`, **422** empty, **409** duplicate SHA-256 |
 | GET | `/api/admin/documents` | admin | list documents with status |
+| GET | `/api/admin/documents/limits` | admin | `{max_upload_mb, accepted_extensions}` from the backend's settings, so the admin page refuses an oversized file before sending it (Phase 8.1) |
 | GET | `/api/admin/behaviour` | admin | `{settings, defaults, locked_rules, updated_at}` (§6.9). **503** (friendly) if the AI service is down |
 | PUT | `/api/admin/behaviour` | admin | `{persona, scope, out_of_scope_message, extra_guardrails}` → same shape as GET. **422** over a cap, an empty `scope`/`out_of_scope_message`, or an unknown field; **503** nothing saved |
 | DELETE | `/api/admin/documents/{id}` | admin | delete file + vectors + row → 204. **409** while the document is `pending`; **503** (nothing removed) if the AI service cannot delete its index |
@@ -425,6 +431,26 @@ chat_sessions
 | GET / PUT | `/internal/behaviour` | read / replace the assistant behaviour (§6.9); PUT validates the caps |
 
 Errors use FastAPI's standard `{"detail": "..."}` with proper status codes. The backend maps AI-service failures to `503` with a friendly message.
+
+**Error causes (Phase 8.1).**
+- An AI-service `503` caused by Ollama also carries an **`X-Error-Code`** header: `ollama_unreachable`, `model_missing` or `ollama_timeout` (`ollama_error` otherwise). The body shape is unchanged.
+- The backend adds `ai_unreachable` and `ai_timeout` itself, and `routers/chat.py` maps each code to one user sentence:
+
+  | Code | User sees |
+  |---|---|
+  | `ai_unreachable`, anything unknown | "Doctor AI is unavailable right now. Please try again in a moment." |
+  | `ollama_unreachable`, `model_missing` | "Doctor AI's language model is offline right now. Please try again later." |
+  | `ollama_timeout`, `ai_timeout` | "Doctor AI took too long to answer. Please try again." |
+
+- The technical reason goes to the log and, for the admin, to the health card or the failed document's `error`.
+- An unhandled backend error is a JSON `500` ("Something went wrong on the server. Please try again.") with CORS headers.
+- An upload whose `Content-Length` is over `MAX_UPLOAD_MB` + 1 MB gets `413` before its body is read. The admin page checks the size first, against the limit from `/api/admin/documents/limits` (not a frontend copy, so a raised `MAX_UPLOAD_MB` just works).
+- `/internal/health` and `/api/health` also report `knowledge_base: {chunks}` (`null` if it cannot be counted). `0` is shown to the admin as "No documents indexed" but does not make the status `degraded`.
+- Timeouts:
+  - Ollama call 120 s, not retried on a timeout
+  - Ollama health check 3 s; backend → AI health 8 s
+  - backend → AI chat 300 s; frontend chat 330 s
+  - frontend upload 300 s; any other frontend call 30 s
 
 ---
 
@@ -564,11 +590,15 @@ npm run dev
 
 **Quality checks (run before saying a task is done)**
 ```powershell
-# in backend/ and ai/
+.\check.ps1                 # from the repo root: everything below, PASS/FAIL table, exit 1 on failure
+.\check.ps1 -Only ai        # one service: ai | backend | frontend
+.\check.ps1 -Live -Only ai  # also pytest -m ollama (needs Ollama running)
+
+# what it runs - in backend/ and ai/
 uv run ruff check . ; uv run ruff format --check . ; uv run pytest
 
 # in frontend/
-npm run lint ; npm run typecheck ; npm run test
+npm run lint ; npm run typecheck ; npm run format:check ; npm run test ; npm run build
 ```
 
 **New migration**
@@ -578,7 +608,13 @@ uv run alembic revision --autogenerate -m "describe change"
 uv run alembic upgrade head
 ```
 
-**Check GPU usage** — `ollama ps` should show the model at `100% GPU`. If it shows CPU, the context or model is too large for 8 GB.
+**Check GPU usage** — `ollama ps` should show the model at `100% GPU`. If it shows CPU, the context or model is too large for 8 GB. During a chat the models swap (§6.8), so a single `ollama ps` can catch the moment between them and list nothing; run it again, or watch `nvidia-smi`.
+
+**Report assets** (Phase 8.5) — rebuild `docs/report/metrics.md` and the SVG charts from an evaluation run:
+```powershell
+cd ai
+uv run python -m ai_service.eval.report --summary ..\data\eval\summary-<ts>.csv --results ..\data\eval\results-<ts>.csv --perf-runs ..\data\eval\runs-<ts>.jsonl --out ..\docs\report
+```
 
 **Preview a CSV conversion** (standard library only; writes `<name>.md` next to the CSV). A `.csv` can be uploaded directly, and ingestion runs this same conversion with `--underscores-to-spaces`. Use the command to see what will be indexed, or to choose a different `--title-column` or `--layout` and upload the `.md` instead.
 ```powershell
@@ -923,11 +959,44 @@ Reading the table:
 
 ### Phase 8 — Hardening (M9)
 
-- **8.1** Error-handling sweep: Ollama down, model not pulled, empty knowledge base, oversized upload, AI-service timeout — each produces a specific, friendly message.
-- **8.2** Fill test gaps; one script that runs all the §12 quality checks.
-- **8.3** README (setup, run, troubleshoot) and both `.env.example` files in sync.
-- **8.4** Performance check: `ollama ps` at 100% GPU, latency recorded per iteration, prompt budget verified under ~7,000 tokens.
-- **8.5** Report assets: architecture diagram, metric tables, screenshots, ablation chart.
+- ✅ **8.1** Error-handling sweep: Ollama down, model not pulled, empty knowledge base, oversized upload, AI-service timeout — each produces a specific, friendly message (§9 "Error causes").
+- ✅ **8.2** Fill test gaps; one script that runs all the §12 quality checks (`check.ps1`).
+- ✅ **8.3** README (front page; setup and troubleshooting stay in `start.md`) and the `.env.example` files in sync (they already matched; no new variables).
+- ✅ **8.4** Performance check: `ollama ps` at 100% GPU, latency recorded per iteration, prompt budget verified under ~7,000 tokens.
+- ✅ **8.5** Report assets in `docs/report/`: architecture and pipeline diagrams, metric tables, ablation and latency charts, screenshots.
+
+**Gate: PASSED 2026-11-22.**
+
+| Check | Result |
+|---|---|
+| `.\check.ps1 -Live` | 12/12 PASS. AI 484 tests (+13 live), backend 202, frontend 63 (9 files); ruff, ESLint, `tsc`, Prettier, `vite build` clean |
+| Live walkthrough (Edge via Playwright, throwaway stack, real models) | 29 checks passed in 7 scenarios, no unexpected console errors. Two walkthrough-script bugs (navigating before sign-in finished; a reply match that hit the disclaimer) were fixed and those steps re-run |
+
+The live walkthrough covered each failure on the throwaway stack:
+
+| Failure | User sees | Admin sees |
+|---|---|---|
+| Empty knowledge base | §7.4 fallback in 0.9 s; the AI log shows `empty_kb` and no embed call | "No documents indexed" |
+| Ollama unreachable (dead port on the throwaway stack; your Ollama was not stopped) | "language model is offline" after 10.6 s of connect retries | The Ollama error plus "run `ollama serve`"; startup log warning |
+| `LLM_MODEL=qwen3:doesnotexist` | The same message in 0.1 s | "Model … is not pulled. Run `ollama pull` …"; startup log warning |
+| AI service stopped | "Doctor AI is unavailable" | — |
+| Backend stopped mid-session | "Could not reach the VeriDoc server" | Status card: "Backend unreachable" |
+| 40 MB upload against `MAX_UPLOAD_MB=35` | — | Refused in the browser; `curl` got 413 in 3 ms after sending 0.7 MB, with CORS headers |
+
+Regressions were checked too: verified answer with a `disease.md` citation, small talk, the refusal text and the emergency banner, all at 390 px with no overflow.
+
+**Found during the live run and fixed:** the admin page at first checked uploads against a hard-coded 25 MB copy of the default. This machine's `backend/.env` sets `MAX_UPLOAD_MB=35`, so that copy would have refused files the server accepts. The page now reads the limit from `GET /api/admin/documents/limits`.
+
+**Known limitation (decided 2026-11-22: left as is for v1):** in the chest-pain answer the Verifier passed a draft whose last two sentences carry no `[n]` citation (general "go to the emergency room" advice). §7.1 asks for a citation on every medical statement. Fixing it (fail the audit on uncited sentences, or strip them) changes medical output, so it needs a decision before any change.
+
+**Performance (8.4), full loop on the 55-row test set:**
+- Turn latency: mean 17.6 s, median 16.0, p95 38.6.
+- Mean per iteration: 15.6 s (iteration 1, which carries the model swaps), 9.2 s (iteration 2), 1.6 s (iteration 3, often a quick "not in documents").
+- The 6 turns that used all 3 iterations: mean 20.8 s, p95 47.0.
+- Largest prompts (Ollama's count): Generator 5,090, Verifier 4,638, classifier 436, all under 7,000. The static worst case (`test_prompt_budget.py`) estimates 5,497 for the Generator and 6,001 for the Verifier.
+- Both models ran at 100% GPU (`qwen3:8b` 6.2 GB, `bge-m3` 689 MB, `num_ctx` 8192), each resident only between swaps (§6.8).
+
+Tables: `docs/report/metrics.md`. Plan and results: `.claude/plans/phase_8_hardening.md`.
 
 ### Work split (two developers)
 

@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 560" width="760" height="560" role="img" aria-labelledby="title desc">
+  <title id="title">VeriDoc AI architecture</title>
+  <desc id="desc">Four processes in a chain: the React frontend talks only to the FastAPI backend, which owns SQLite and uploads; the backend calls the AI service over localhost with a shared key; the AI service owns Qdrant, the parent docstore, transcripts and behaviour, and is the only caller of Ollama, which runs qwen3:8b and bge-m3 on the GPU.</desc>
+  <style>
+    .surface { fill: #fcfcfb; }
+    .box { fill: #ffffff; stroke: #c9c8c2; stroke-width: 1.5; }
+    .store { fill: #f3f2ee; stroke: #c9c8c2; stroke-width: 1; }
+    .accent { fill: #2a78d6; }
+    .ink { fill: #0b0b0b; }
+    .ink-2 { fill: #52514e; }
+    .edge { stroke: #52514e; stroke-width: 1.5; fill: none; }
+    .tie { stroke: #a3a29c; stroke-width: 1; stroke-dasharray: 4 3; fill: none; }
+    .arrow { fill: #52514e; }
+    text { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    @media (prefers-color-scheme: dark) {
+      .surface { fill: #1a1a19; }
+      .box { fill: #242422; stroke: #4a4944; }
+      .store { fill: #2c2c29; stroke: #4a4944; }
+      .accent { fill: #3987e5; }
+      .ink { fill: #f0efec; }
+      .ink-2 { fill: #c3c2b7; }
+      .edge { stroke: #c3c2b7; }
+      .tie { stroke: #6b6a64; }
+      .arrow { fill: #c3c2b7; }
+    }
+  </style>
+  <defs>
+    <marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path class="arrow" d="M0,0 L10,5 L0,10 z"/>
+    </marker>
+  </defs>
+  <rect class="surface" x="0" y="0" width="760" height="560" rx="8"/>
+  <text class="ink" x="24" y="34" font-size="18" font-weight="600">VeriDoc AI architecture</text>
+  <text class="ink-2" x="24" y="56" font-size="12">Everything runs locally on one Windows laptop (8 GB GPU). Each box is one process.</text>
+
+  <!-- Frontend -->
+  <rect class="box" x="40" y="80" width="320" height="74" rx="10"/>
+  <rect class="accent" x="40" y="80" width="6" height="74" rx="3"/>
+  <text class="ink" x="62" y="106" font-size="15" font-weight="600">Frontend</text>
+  <text class="ink-2" x="62" y="126" font-size="12">React + Vite + TypeScript · :5173</text>
+  <text class="ink-2" x="62" y="143" font-size="12">chat, admin pages, status card</text>
+
+  <!-- Backend -->
+  <rect class="box" x="40" y="200" width="320" height="74" rx="10"/>
+  <rect class="accent" x="40" y="200" width="6" height="74" rx="3"/>
+  <text class="ink" x="62" y="226" font-size="15" font-weight="600">Backend</text>
+  <text class="ink-2" x="62" y="246" font-size="12">FastAPI · :8000</text>
+  <text class="ink-2" x="62" y="263" font-size="12">auth (JWT, Argon2), users, uploads, chat gateway</text>
+
+  <!-- AI service -->
+  <rect class="box" x="40" y="320" width="320" height="90" rx="10"/>
+  <rect class="accent" x="40" y="320" width="6" height="90" rx="3"/>
+  <text class="ink" x="62" y="346" font-size="15" font-weight="600">AI service</text>
+  <text class="ink-2" x="62" y="366" font-size="12">FastAPI + LangGraph · 127.0.0.1:8001</text>
+  <text class="ink-2" x="62" y="383" font-size="12">parse, chunk, embed, retrieve, Generator,</text>
+  <text class="ink-2" x="62" y="399" font-size="12">Verifier, intent routing, safety check</text>
+
+  <!-- Ollama -->
+  <rect class="box" x="40" y="456" width="320" height="74" rx="10"/>
+  <rect class="accent" x="40" y="456" width="6" height="74" rx="3"/>
+  <text class="ink" x="62" y="482" font-size="15" font-weight="600">Ollama</text>
+  <text class="ink-2" x="62" y="502" font-size="12">:11434 · 100% GPU, one model resident at a time</text>
+  <text class="ink-2" x="62" y="519" font-size="12">qwen3:8b (6.2 GB) · bge-m3 (689 MB)</text>
+
+  <!-- chain edges -->
+  <path class="edge" d="M200,154 V198" marker-end="url(#head)"/>
+  <text class="ink-2" x="212" y="181" font-size="11">REST + JWT bearer token</text>
+  <path class="edge" d="M200,274 V318" marker-end="url(#head)"/>
+  <text class="ink-2" x="212" y="301" font-size="11">HTTP + X-Internal-Key (localhost only)</text>
+  <path class="edge" d="M200,410 V454" marker-end="url(#head)"/>
+  <text class="ink-2" x="212" y="437" font-size="11">ollama_client.py, the only caller</text>
+
+  <!-- backend stores -->
+  <rect class="store" x="440" y="200" width="290" height="74" rx="10"/>
+  <text class="ink" x="458" y="226" font-size="13" font-weight="600">Backend data</text>
+  <text class="ink-2" x="458" y="246" font-size="12">data/app.db: users, documents, sessions</text>
+  <text class="ink-2" x="458" y="263" font-size="12">data/uploads/: the original files</text>
+  <path class="tie" d="M362,237 H438"/>
+
+  <!-- AI stores -->
+  <rect class="store" x="440" y="320" width="290" height="110" rx="10"/>
+  <text class="ink" x="458" y="346" font-size="13" font-weight="600">AI service data</text>
+  <text class="ink-2" x="458" y="366" font-size="12">data/vectors/: Qdrant, 1024-dim child chunks</text>
+  <text class="ink-2" x="458" y="383" font-size="12">data/docstore.db: parent chunks</text>
+  <text class="ink-2" x="458" y="400" font-size="12">data/chats/: session transcripts</text>
+  <text class="ink-2" x="458" y="417" font-size="12">data/behaviour.json: admin tone, guardrails</text>
+  <path class="tie" d="M362,365 H438"/>
+
+  <!-- rules -->
+  <text class="ink-2" x="440" y="100" font-size="12" font-weight="600">Boundaries</text>
+  <text class="ink-2" x="440" y="120" font-size="12">• The frontend talks only to the backend.</text>
+  <text class="ink-2" x="440" y="138" font-size="12">• The backend never imports AI code.</text>
+  <text class="ink-2" x="440" y="156" font-size="12">• Only the AI service opens Qdrant.</text>
+  <text class="ink-2" x="440" y="174" font-size="12">• No cloud AI: every model is local.</text>
+</svg>

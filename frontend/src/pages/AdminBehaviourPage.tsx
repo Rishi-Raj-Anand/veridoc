@@ -20,7 +20,7 @@ import {
   type BehaviourResponse,
   type BehaviourSettings,
 } from "../api/behaviour";
-import { ApiError } from "../api/client";
+import { errorMessage } from "../api/client";
 import { AdminTabs } from "../components/admin/AdminTabs";
 import { BEHAVIOUR_LIMITS } from "../constants";
 
@@ -64,7 +64,7 @@ const STEPS = [
 ];
 
 function describe(error: unknown): string {
-  return error instanceof ApiError ? error.message : "Could not reach the server.";
+  return errorMessage(error);
 }
 
 function sameSettings(a: BehaviourSettings, b: BehaviourSettings): boolean {

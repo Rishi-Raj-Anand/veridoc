@@ -75,7 +75,13 @@ def parse_pdf(path: Path) -> list[PageText]:
         pages: list[PageText] = []
         non_space_chars = 0
         for index in range(page_count):
-            raw = pdf[index].get_text("text", sort=True)
+            try:
+                raw = pdf[index].get_text("text", sort=True)
+            except Exception as exc:  # a damaged page object or content stream
+                raise ParseError(
+                    f"could not read page {index + 1} of the PDF ({type(exc).__name__}) - "
+                    "the file may be damaged; re-export it and upload again"
+                ) from exc
             non_space_chars += len(re.sub(r"\s", "", raw))
             text = normalise_text(raw)
             if text:
@@ -105,7 +111,10 @@ def parse_docx(path: Path) -> list[PageText]:
 
 
 def _read_text(path: Path) -> str:
-    data = path.read_bytes()
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        raise ParseError(f"could not read the uploaded file ({type(exc).__name__})") from exc
     try:
         return data.decode("utf-8-sig")
     except UnicodeDecodeError:

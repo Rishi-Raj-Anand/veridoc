@@ -9,7 +9,7 @@ import { useMutation } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
 import { sendMessage } from "../api/chat";
-import { ApiError } from "../api/client";
+import { errorMessage } from "../api/client";
 import { Composer } from "../components/chat/Composer";
 import { DisclaimerBanner } from "../components/chat/DisclaimerBanner";
 import {
@@ -26,8 +26,6 @@ const EXAMPLE_QUESTIONS = [
   "What helps with a common cold?",
 ];
 
-const NETWORK_ERROR = "Could not reach Doctor AI. Check your connection and try again.";
-
 export function ChatPage() {
   const [sessionId] = useState(() => crypto.randomUUID());
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -41,7 +39,7 @@ export function ChatPage() {
       setMessages((current) => [...current, { id: nextId.current++, role: "assistant", response }]);
     },
     onError: (error, text) => {
-      const message = error instanceof ApiError ? error.message : NETWORK_ERROR;
+      const message = errorMessage(error);
       setMessages((current) => [
         ...current,
         { id: nextId.current++, role: "error", text: message, retryText: text },

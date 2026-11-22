@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import Settings, get_settings
 from app.db import get_sessionmaker
+from app.middleware import CatchAllErrors, UploadSizeLimit
 from app.routers import admin, admin_behaviour, auth, chat, health
 from app.services.auth_service import seed_admin
 from app.services.document_service import mark_interrupted_ingests
@@ -48,6 +49,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             "still using placeholder values for %s - set real values in backend/.env",
             ", ".join(insecure),
         )
+    if settings.jwt_secret_too_short:
+        logger.warning(
+            "JWT_SECRET is shorter than 32 bytes - set a longer random value in backend/.env"
+        )
     with get_sessionmaker()() as db:
         seed_admin(db, settings)
         if interrupted := mark_interrupted_ingests(db):
@@ -65,6 +70,10 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
+    # The last middleware added is the outermost, so CORS wraps both of these and their
+    # 413 / 500 responses stay readable by the browser.
+    app.add_middleware(CatchAllErrors)
+    app.add_middleware(UploadSizeLimit)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,

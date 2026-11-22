@@ -16,6 +16,13 @@ class CitationDict(TypedDict):
     page: int
 
 
+# "unverified" only appears in the single-pass evaluation ablation (no Verifier, §13).
+# "empty_kb": nothing is indexed, so the turn falls back without embedding (Phase 8.1).
+AttemptOutcome = Literal[
+    "low_score", "not_covered", "uncited", "pass", "fail", "unverified", "empty_kb"
+]
+
+
 class Attempt(TypedDict, total=False):
     """One pass through the loop, kept for logging, transcripts (5.1) and evaluation (7.x)."""
 
@@ -23,11 +30,11 @@ class Attempt(TypedDict, total=False):
     mode: Literal["precision", "expansion"]
     best_score: float
     sources: int
-    # "unverified" only appears in the single-pass evaluation ablation (no Verifier, §13).
-    outcome: Literal["low_score", "not_covered", "uncited", "pass", "fail", "unverified"]
+    outcome: AttemptOutcome
     faithfulness: float
     relevance: float
     parse_failed: bool
+    seconds: float  # retrieve start to the end of this iteration's guard or audit (8.4)
 
 
 class PipelineState(TypedDict, total=False):
@@ -45,6 +52,7 @@ class PipelineState(TypedDict, total=False):
     query_vector: list[float]
     vector_query: str  # the text query_vector was computed from (lets us skip re-embedding)
     iteration: int
+    iteration_started: float  # time.perf_counter() when this iteration's retrieve began
     retrieval_mode: Literal["precision", "expansion"]
     sources: list[Source]
     best_score: float

@@ -63,6 +63,11 @@ def sanitize_filename(name: str) -> str:
     return f"{stem}{suffix}"
 
 
+def too_large_message(max_bytes: int) -> str:
+    """The 413 text, shared with the early ``Content-Length`` check in ``app.middleware``."""
+    return f"file is larger than the {max_bytes // (1024 * 1024)} MB upload limit"
+
+
 def _stream_to_file(source: BinaryIO, target: Path, max_bytes: int) -> tuple[str, int, bytes]:
     """Copy ``source`` to ``target`` hashing as we go; abort as soon as the limit is passed."""
     digest = hashlib.sha256()
@@ -72,9 +77,7 @@ def _stream_to_file(source: BinaryIO, target: Path, max_bytes: int) -> tuple[str
         while chunk := source.read(CHUNK_BYTES):
             size += len(chunk)
             if size > max_bytes:
-                raise UploadRejected(
-                    413, f"file is larger than the {max_bytes // (1024 * 1024)} MB upload limit"
-                )
+                raise UploadRejected(413, too_large_message(max_bytes))
             if not head:
                 head = chunk[:TEXT_SNIFF_BYTES]
             digest.update(chunk)

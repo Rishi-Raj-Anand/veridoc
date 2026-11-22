@@ -144,6 +144,10 @@ class Retriever:
         self._llm = llm
         self._settings = settings
 
+    def is_empty(self) -> bool:
+        """True when nothing is indexed yet: a search could only come back empty."""
+        return self._store.count() == 0
+
     def embed_query(self, query: str) -> list[float]:
         """The query vector; a separate step so the pipeline can reuse it (§6.8: one fewer swap)."""
         return self._llm.embed([query])[0]

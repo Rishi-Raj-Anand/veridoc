@@ -55,8 +55,11 @@ Variant = Literal["full", "single_pass"]
 VARIANTS: tuple[Variant, ...] = ("full", "single_pass")
 METRICS = ("faithfulness", "answer_relevancy", "context_precision")
 EVAL_USER_ID = 0
+ITERATION_LEVELS = (1, 2, 3)  # §6.3
 DEFAULT_TESTSET = Path(__file__).with_name("testset.jsonl")
 EXIT_SETUP = 2
+# Matches ragas_adapter.JUDGE_TIMEOUT_SECONDS (not imported: that module needs ragas).
+EVAL_REQUEST_TIMEOUT_SECONDS = 600.0
 
 LOCKED_MESSAGE = (
     "Qdrant storage at {path} is locked by another process. Qdrant local mode allows one "
@@ -86,6 +89,13 @@ class RunRow(BaseModel):
     retrieved_files: list[str] = Field(default_factory=list)
     error: str | None = None
     scores: dict[str, float | None] = Field(default_factory=dict)
+    # Every Ollama call of the turn (purpose, tokens, seconds); empty in Phase 7 runs files.
+    llm_calls: list[dict[str, Any]] = Field(default_factory=list)
+
+    @property
+    def max_prompt_tokens(self) -> int | None:
+        counts = [c["prompt_tokens"] for c in self.llm_calls if c.get("prompt_tokens") is not None]
+        return max(counts, default=None)
 
     @property
     def key(self) -> tuple[str, str]:
@@ -134,6 +144,7 @@ def to_row(case: TestCase, variant: Variant, result: PipelineResult, latency: fl
         contexts=[s.text for s in result.sources],
         cited_files=sorted({c["filename"] for c in result.citations}),
         retrieved_files=sorted({s.filename for s in result.sources}),
+        llm_calls=[dict(c) for c in result.llm_calls],
     )
 
 
@@ -327,6 +338,9 @@ class VariantSummary:
     latency_median: float | None = None
     latency_p95: float | None = None
     source_hit_rate: float | None = None
+    # Phase 8.4: mean seconds of iteration 1/2/3, and the largest prompt any call sent.
+    iteration_seconds: dict[int, float | None] = field(default_factory=dict)
+    max_prompt_tokens: int | None = None
     scored: int = 0
     metrics: dict[str, float | None] = field(default_factory=dict)
     paired: int = 0
@@ -348,6 +362,16 @@ def p95(values: Sequence[float]) -> float | None:
         return None
     ordered = sorted(values)
     return ordered[max(0, math.ceil(0.95 * len(ordered)) - 1)]
+
+
+def iteration_seconds(rows: Sequence[RunRow]) -> dict[int, float | None]:
+    """Mean duration of each iteration level (retrieve to guard/audit), over all attempts."""
+    return {
+        level: _mean(
+            a.get("seconds") for r in rows for a in r.attempts if a.get("iteration") == level
+        )
+        for level in ITERATION_LEVELS
+    }
 
 
 def summarize(rows: Sequence[RunRow]) -> list[VariantSummary]:
@@ -385,6 +409,11 @@ def summarize(rows: Sequence[RunRow]) -> list[VariantSummary]:
                 latency_median=round(statistics.median(latencies), 3) if latencies else None,
                 latency_p95=p95(latencies),
                 source_hit_rate=_rate(sum(hits), len(hits)),
+                iteration_seconds=iteration_seconds(ok),
+                max_prompt_tokens=max(
+                    (r.max_prompt_tokens for r in ok if r.max_prompt_tokens is not None),
+                    default=None,
+                ),
                 scored=len(scored),
                 metrics={m: _mean(r.scores.get(m) for r in scored) for m in METRICS},
                 paired=len(paired),
@@ -409,6 +438,8 @@ SUMMARY_FIELDS = (
     "latency_median",
     "latency_p95",
     "source_hit_rate",
+    *(f"iteration{level}_seconds" for level in ITERATION_LEVELS),
+    "max_prompt_tokens",
     "scored",
     *METRICS,
     "paired",
@@ -426,6 +457,8 @@ RESULT_FIELDS = (
     "iterations",
     "best_score",
     "latency_s",
+    "attempt_seconds",
+    "max_prompt_tokens",
     "source_hit",
     "retrieved_source",
     *METRICS,
@@ -453,6 +486,8 @@ def summary_record(s: VariantSummary) -> dict[str, Any]:
         "latency_median": s.latency_median,
         "latency_p95": s.latency_p95,
         "source_hit_rate": s.source_hit_rate,
+        **{f"iteration{k}_seconds": v for k, v in s.iteration_seconds.items()},
+        "max_prompt_tokens": s.max_prompt_tokens,
         "scored": s.scored,
         "paired": s.paired,
     }
@@ -474,6 +509,10 @@ def result_record(row: RunRow) -> dict[str, Any]:
         "iterations": row.iterations,
         "best_score": row.best_score,
         "latency_s": row.latency_s,
+        "attempt_seconds": " ".join(
+            f"{a['seconds']:.1f}" for a in row.attempts if a.get("seconds") is not None
+        ),
+        "max_prompt_tokens": row.max_prompt_tokens,
         "source_hit": row.source_hit,
         "retrieved_source": (row.source in row.retrieved_files) if row.source else None,
         **{m: row.scores.get(m) for m in METRICS},
@@ -511,6 +550,8 @@ def format_summary(summaries: Sequence[VariantSummary]) -> str:
         ("off-corpus refused", lambda s: _fmt(s.refusal_rate, True)),
         ("avg iterations", lambda s: _fmt(s.avg_iterations)),
         ("latency mean / median / p95 (s)", _latency_cell),
+        ("iteration 1 / 2 / 3 mean (s)", _iteration_cell),
+        ("max prompt tokens", lambda s: str(s.max_prompt_tokens or "-")),
         ("cites the expected source", lambda s: _fmt(s.source_hit_rate, True)),
         ("scored answers", lambda s: str(s.scored)),
         *((f"{m}", _metric_cell(m, paired=False)) for m in METRICS),
@@ -530,6 +571,10 @@ def format_summary(summaries: Sequence[VariantSummary]) -> str:
 
 def _latency_cell(s: VariantSummary) -> str:
     return f"{_fmt(s.latency_mean)}/{_fmt(s.latency_median)}/{_fmt(s.latency_p95)}"
+
+
+def _iteration_cell(s: VariantSummary) -> str:
+    return "/".join(_fmt(s.iteration_seconds.get(level)) for level in ITERATION_LEVELS)
 
 
 def _metric_cell(metric: str, *, paired: bool) -> Callable[[VariantSummary], str]:
@@ -648,7 +693,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _run(args: argparse.Namespace, settings: Settings) -> int:
-    client = OllamaClient(settings)
+    # Judge prompts are long and the run is offline, so allow what RAGAS allows per call.
+    client = OllamaClient(settings, request_timeout=EVAL_REQUEST_TIMEOUT_SECONDS)
     if args.score is not None:
         rows = load_runs(args.score)
         check_models(client, settings)

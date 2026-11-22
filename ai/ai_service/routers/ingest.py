@@ -20,6 +20,7 @@ from ai_service.deps import DocstoreDep, LlmDep, VectorStoreDep
 from ai_service.ingestion.indexer import index_document
 from ai_service.ingestion.parsers import ParseError
 from ai_service.llm.ollama_client import OllamaError
+from ai_service.routers.errors import ollama_unavailable
 from ai_service.security import require_internal_key
 
 logger = logging.getLogger(__name__)
@@ -90,11 +91,13 @@ async def ingest(
     except ParseError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     except OllamaError as exc:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+        raise ollama_unavailable(exc) from exc
     except Exception as exc:
+        # The traceback goes to the log; the admin's document row gets a plain sentence.
         logger.exception("ingest failed for doc_id=%d", body.doc_id)
         raise HTTPException(
-            status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"ingestion failed: {exc}"
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"indexing failed unexpectedly ({type(exc).__name__}) - see the AI service log",
         ) from exc
     return IngestResponse(chunk_count=result.chunk_count)
 
@@ -108,8 +111,18 @@ async def delete_document(
     store: VectorStoreDep,
     docstore: DocstoreDep,
 ) -> DeleteResponse:
-    async with _lock(request):
-        points = await asyncio.to_thread(store.delete_document, doc_id)
-        parents = await asyncio.to_thread(docstore.delete_document, doc_id)
+    try:
+        async with _lock(request):
+            points = await asyncio.to_thread(store.delete_document, doc_id)
+            parents = await asyncio.to_thread(docstore.delete_document, doc_id)
+    except Exception as exc:
+        logger.exception("delete failed for doc_id=%d", doc_id)
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                f"could not remove document {doc_id} from the index ({type(exc).__name__}) "
+                "- see the AI service log"
+            ),
+        ) from exc
     logger.info("deleted doc_id=%d points=%d parents=%d", doc_id, points, parents)
     return DeleteResponse(deleted_points=points, deleted_parents=parents)

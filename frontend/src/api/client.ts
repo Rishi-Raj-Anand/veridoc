@@ -19,6 +19,14 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * The sentence to show for any failed call. `request` already turns network failures and
+ * timeouts into an `ApiError`, so the fallback only covers truly unexpected errors.
+ */
+export function errorMessage(error: unknown): string {
+  return error instanceof ApiError ? error.message : NETWORK_ERROR;
+}
+
 type TokenProvider = () => string | null;
 
 let getAuthToken: TokenProvider = () => null;
@@ -41,11 +49,23 @@ export function setUnauthorizedHandler(handler: () => void): void {
   onUnauthorized = handler;
 }
 
+/** Status of an `ApiError` that never got an HTTP answer (backend down, or timed out). */
+export const NO_RESPONSE = 0;
+
+export const NETWORK_ERROR =
+  "Could not reach the VeriDoc server. Check that it is running and try again.";
+export const TIMEOUT_ERROR = "The VeriDoc server took too long to answer. Please try again.";
+export const DEFAULT_TIMEOUT_MS = 30_000;
+
 interface RequestOptions {
   method?: "GET" | "POST" | "PUT" | "DELETE";
   /** A JSON-serialisable value, or `FormData` for a multipart upload. */
   body?: unknown;
   signal?: AbortSignal;
+  /** Give up after this long (default 30 s); long calls such as chat pass their own. */
+  timeoutMs?: number;
+  /** What to tell the user when `timeoutMs` runs out. */
+  timeoutMessage?: string;
 }
 
 /**
@@ -79,9 +99,35 @@ async function errorDetail(response: Response): Promise<string> {
   return response.statusText || `request failed with status ${response.status}`;
 }
 
-/** Perform a request against the backend and parse the JSON response as `T`. */
+/**
+ * Perform a request against the backend and parse the JSON response as `T`.
+ *
+ * Every failure is an `ApiError`: the backend's own `detail` for an HTTP error, or
+ * `NO_RESPONSE` with one friendly sentence when the backend is unreachable or too slow,
+ * so pages never show raw browser text such as "Failed to fetch".
+ */
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { method = "GET", body, signal } = options;
+  const { signal, timeoutMs = DEFAULT_TIMEOUT_MS, timeoutMessage = TIMEOUT_ERROR } = options;
+  const controller = new AbortController();
+  const forwardAbort = () => controller.abort();
+  signal?.addEventListener("abort", forwardAbort);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new ApiError(NO_RESPONSE, timeoutMessage));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([send<T>(path, options, controller.signal), timedOut]);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", forwardAbort);
+  }
+}
+
+async function send<T>(path: string, options: RequestOptions, signal: AbortSignal): Promise<T> {
+  const { method = "GET", body } = options;
 
   const headers = new Headers();
   const token = getAuthToken();
@@ -98,7 +144,16 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     payload = JSON.stringify(body);
   }
 
-  const response = await fetch(`${apiBaseUrl}${path}`, { method, headers, signal, body: payload });
+  let response: Response;
+  try {
+    response = await fetch(`${apiBaseUrl}${path}`, { method, headers, signal, body: payload });
+  } catch (caught) {
+    // Browsers reject with a TypeError when nothing answers (backend down, CORS failure).
+    if (caught instanceof TypeError) {
+      throw new ApiError(NO_RESPONSE, NETWORK_ERROR);
+    }
+    throw caught;
+  }
 
   if (!response.ok) {
     if (response.status === 401 && token !== null) {

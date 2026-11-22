@@ -22,6 +22,15 @@ export interface ChatResponse {
   disclaimer: string;
 }
 
+/** Above the backend's 300 s wait for the AI service, so the backend's own message wins. */
+export const CHAT_TIMEOUT_MS = 330_000;
+export const CHAT_TIMEOUT_ERROR = "Doctor AI took too long to answer. Please try again.";
+
 export function sendMessage(body: ChatMessageRequest): Promise<ChatResponse> {
-  return request<ChatResponse>("/api/chat/message", { method: "POST", body });
+  return request<ChatResponse>("/api/chat/message", {
+    method: "POST",
+    body,
+    timeoutMs: CHAT_TIMEOUT_MS,
+    timeoutMessage: CHAT_TIMEOUT_ERROR,
+  });
 }

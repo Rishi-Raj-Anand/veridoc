@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Link } from "react-router";
 
 import { register } from "../api/auth";
-import { ApiError } from "../api/client";
+import { errorMessage } from "../api/client";
 import { AuthCard } from "../components/AuthCard";
 import { MIN_PASSWORD_CHARS } from "../constants";
 import { useAuth } from "../hooks/useAuth";
@@ -29,7 +29,7 @@ export function RegisterPage() {
       await register({ email: address, password });
       await login(address, password);
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not reach the server.");
+      setError(errorMessage(caught));
       setPending(false);
     }
   }

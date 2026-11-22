@@ -43,6 +43,7 @@ class SmallTalk:
             self._llm.chat(
                 [{"role": "system", "content": system}, {"role": "user", "content": message}],
                 temperature=SMALLTALK_TEMPERATURE,
+                purpose="smalltalk",
             )
         ).strip()
         return clip(text) if text else DEFAULT_REPLY

@@ -73,7 +73,12 @@ class IntentClassifier:
         ]
         for attempt in range(1, PARSE_ATTEMPTS + 1):
             reply = strip_thinking(
-                self._llm.chat(messages, temperature=CLASSIFIER_TEMPERATURE, format=self._schema)
+                self._llm.chat(
+                    messages,
+                    temperature=CLASSIFIER_TEMPERATURE,
+                    format=self._schema,
+                    purpose="classify",
+                )
             )
             try:
                 return IntentOutput.model_validate_json(reply).intent

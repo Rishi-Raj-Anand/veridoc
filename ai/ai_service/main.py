@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from ai_service.config import DEFAULT_INTERNAL_KEY, Settings, get_settings
+from ai_service.llm.ollama_client import OllamaClient, OllamaError, normalise_model_name
 from ai_service.routers import behaviour, chat, health, ingest
 from ai_service.runtime import build_runtime, open_qdrant_sync
 
@@ -37,6 +38,26 @@ def ensure_data_dirs(settings: Settings) -> None:
         settings.eval_dir,
     ):
         directory.mkdir(parents=True, exist_ok=True)
+
+
+def probe_ollama(settings: Settings) -> list[str]:
+    """Check Ollama once at startup and return warnings to log. Never raises or blocks startup.
+
+    The service starts without Ollama on purpose (health then reports it), but saying so in
+    the startup log saves a trip to the admin page.
+    """
+    try:
+        available = OllamaClient(settings).list_models()
+    except OllamaError:
+        return [
+            f"Ollama is not reachable at {settings.ollama_host} - chat and ingest will fail "
+            "until it is started (ollama serve)"
+        ]
+    return [
+        f"model {model} is not pulled - run: ollama pull {model}"
+        for model in (settings.llm_model, settings.embed_model)
+        if normalise_model_name(model) not in available
+    ]
 
 
 @asynccontextmanager
@@ -67,6 +88,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.pipeline = runtime.pipeline
     app.state.chat_store = runtime.chat_store
     logger.info("docstore     : %s", settings.docstore_path)
+    for warning in await asyncio.to_thread(probe_ollama, settings):
+        logger.warning("%s", warning)
     try:
         yield
     finally:

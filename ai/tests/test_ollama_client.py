@@ -11,7 +11,16 @@ import pytest
 
 from ai_service.config import Settings
 from ai_service.llm import ollama_client
-from ai_service.llm.ollama_client import EMBED_BATCH_SIZE, OllamaClient, OllamaError
+from ai_service.llm.ollama_client import (
+    EMBED_BATCH_SIZE,
+    REQUEST_TIMEOUT_SECONDS,
+    ModelNotPulledError,
+    OllamaClient,
+    OllamaError,
+    OllamaTimeoutError,
+    OllamaUnreachableError,
+    llm_usage,
+)
 
 
 class FakeClient:
@@ -143,3 +152,107 @@ def test_client_error_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
         make_client(monkeypatch, fake).embed(["a"])
 
     assert len(fake.calls) == 1
+
+
+# --- Phase 8.1: typed errors, timeouts, usage ---------------------------------------------
+
+
+def test_errors_carry_a_code_per_cause() -> None:
+    assert OllamaError("x").code == "ollama_error"
+    assert OllamaUnreachableError("x").code == "ollama_unreachable"
+    assert ModelNotPulledError("x").code == "model_missing"
+    assert OllamaTimeoutError("x").code == "ollama_timeout"
+    assert all(
+        issubclass(cls, OllamaError)
+        for cls in (OllamaUnreachableError, ModelNotPulledError, OllamaTimeoutError)
+    )
+
+
+def test_unreachable_is_its_own_type(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = FakeClient([ConnectionError("Failed to connect to Ollama")] * 3)
+
+    with pytest.raises(OllamaUnreachableError, match="is it running"):
+        make_client(monkeypatch, fake).chat([{"role": "user", "content": "x"}], temperature=0)
+
+
+def test_missing_model_is_its_own_type(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = FakeClient([ollama.ResponseError("model not found", 404)])
+
+    with pytest.raises(ModelNotPulledError, match="ollama pull qwen3:8b"):
+        make_client(monkeypatch, fake).chat([{"role": "user", "content": "x"}], temperature=0)
+
+
+def test_a_read_timeout_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = FakeClient([httpx.ReadTimeout("slow")] * 3)
+
+    with pytest.raises(OllamaTimeoutError, match="within 120 s"):
+        make_client(monkeypatch, fake).chat([{"role": "user", "content": "x"}], temperature=0)
+
+    assert len(fake.calls) == 1  # re-asking a stuck generation would only triple the wait
+
+
+def test_server_errors_give_up_after_the_last_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = FakeClient([ollama.ResponseError("overloaded", 503)] * 3)
+
+    with pytest.raises(OllamaError, match="overloaded") as caught:
+        make_client(monkeypatch, fake).embed(["a"])
+
+    assert type(caught.value) is OllamaError
+    assert len(fake.calls) == 3
+
+
+def test_an_unexpected_exception_is_not_reported_as_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = FakeClient([ValueError("bad payload")])
+
+    with pytest.raises(OllamaError, match="ValueError: bad payload") as caught:
+        make_client(monkeypatch, fake).embed(["a"])
+
+    assert type(caught.value) is OllamaError
+    assert len(fake.calls) == 1
+
+
+def test_the_request_timeout_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, Any] = {}
+
+    def factory(**kwargs: Any) -> FakeClient:
+        seen.update(kwargs)
+        return FakeClient()
+
+    monkeypatch.setattr(ollama_client.ollama, "Client", factory)
+    OllamaClient(Settings(_env_file=None))
+    assert seen["timeout"] == REQUEST_TIMEOUT_SECONDS == 120.0
+
+    OllamaClient(Settings(_env_file=None), request_timeout=600.0)
+    assert seen["timeout"] == 600.0
+
+
+def test_list_models_failure_is_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Down:
+        def list(self) -> Any:
+            raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr(ollama_client.ollama, "Client", lambda **_kw: Down())
+
+    with pytest.raises(OllamaUnreachableError, match="cannot reach Ollama"):
+        OllamaClient(Settings(_env_file=None)).list_models()
+
+
+def test_calls_are_recorded_only_inside_a_usage_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    reply = SimpleNamespace(
+        message=SimpleNamespace(content="ok"), prompt_eval_count=900, eval_count=12
+    )
+    embedded = SimpleNamespace(embeddings=[[0.1] * 1024], prompt_eval_count=7)
+    client = make_client(monkeypatch, FakeClient([reply, embedded, reply]))
+
+    with llm_usage() as calls:
+        client.chat([{"role": "user", "content": "x"}], temperature=0, purpose="generate")
+        client.embed(["a"])
+    client.chat([{"role": "user", "content": "x"}], temperature=0)  # outside: not recorded
+
+    assert [(c["purpose"], c["prompt_tokens"], c["completion_tokens"]) for c in calls] == [
+        ("generate", 900, 12),
+        ("embed", 7, None),
+    ]
+    assert all(c["seconds"] >= 0 for c in calls)
