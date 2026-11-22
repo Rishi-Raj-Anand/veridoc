@@ -21,8 +21,8 @@ from ai_service.retrieval.retriever import Source, format_context
 
 logger = logging.getLogger(__name__)
 
-VERIFIER_TEMPERATURE = 0.0  # §6.6
-PARSE_ATTEMPTS = 2  # the first call plus one retry (§6.5)
+VERIFIER_TEMPERATURE = 0.2  # §6.6
+PARSE_ATTEMPTS = 3  # the first call plus one retry (§6.5)
 
 
 class VerifierOutput(BaseModel):

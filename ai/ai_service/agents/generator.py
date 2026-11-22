@@ -10,7 +10,7 @@ from ai_service.llm.ollama_client import OllamaClient
 from ai_service.prompts import load_prompt
 from ai_service.retrieval.retriever import Source, format_context
 
-GENERATOR_TEMPERATURE = 0.2  # §6.6
+GENERATOR_TEMPERATURE = 0.3  # §6.6
 
 
 class Generator:

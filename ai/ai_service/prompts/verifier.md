@@ -11,7 +11,7 @@ Check every factual claim in the draft:
    only if a source states them explicitly.
 3. Do not count as claims: advice to consult a doctor or pharmacist, and statements that the
    documents do not cover something. Those are safe and need no source.
-4. Do not reward length or confidence. Judge only what the sources support.
+<!-- 4. Do not reward length or confidence. Judge only what the sources support. -->
 
 Return a single JSON object with exactly these fields:
 

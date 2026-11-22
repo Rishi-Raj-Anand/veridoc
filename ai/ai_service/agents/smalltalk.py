@@ -9,7 +9,7 @@ from ai_service.config import Settings
 from ai_service.llm.ollama_client import OllamaClient
 from ai_service.prompts import load_prompt
 
-SMALLTALK_TEMPERATURE = 0.3  # a little variety; there are no facts to get wrong
+SMALLTALK_TEMPERATURE = 0.5  # a little variety; there are no facts to get wrong
 MAX_REPLY_CHARS = 600
 DEFAULT_REPLY = (
     "Hello! I'm Doctor AI. Ask me a health or medical question and I'll answer it from my "
