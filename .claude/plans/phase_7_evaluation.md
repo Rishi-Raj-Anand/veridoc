@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Status** | ✅ **Complete: gate passed 2026-11-22** (full run on the team's 55-row test set; results in CLAUDE.md §17) |
-| **Branch** | `feature/7-evaluation` from `main` (after `08791e6`) |
+| **Branch** | `feature/7-evaluation` from `main` (after `08791e6`); merged to `main` 2026-11-22 (merge `50b8aa5`, feature commit `2879c4f`), then deleted |
 | **Touches** | `ai/` and docs only (`CLAUDE.md`, `start.md`). Backend and frontend are untouched. |
 | **New dependencies** | None. `ragas==0.4.4` is already pinned in the optional `eval` group. |
 | **Record** | At 7.0, copy this plan to `.claude/plans/phase_7_evaluation.md`. Fill in the results at the end. |
@@ -230,3 +230,11 @@ The eval must call the **same pipeline as production**, in-process. It must fail
 | Latency mean / p95 | 17.2 / 36.6 s | 13.7 / 16.1 s |
 
 The Verifier turned 3 unfaithful single-pass answers into faithful ones and recovered 3 more questions the single pass could not cite, for about 3.5 s extra per answer. `medquad-05` and `medquad-10` were routed to `out_of_scope` by the classifier in both variants (reported, not changed). Full reading and caveats are in CLAUDE.md §17.
+
+### Closing (2026-11-22)
+- Merged with `--no-ff`; the feature branch is deleted, there are no stashes and the working tree is clean. Nothing was pushed to `origin`.
+- Final checks: AI 446 tests (+13 live behind `-m ollama`), ruff and ruff format clean.
+- CLAUDE.md was updated: §3 (ragas pin note), §5, §12, §13, §17 (gate, ablation table, final checks).
+- Kept for the report (git-ignored, in `data/eval/`): `results-20261122-0845.csv`, `summary-20261122-0845.csv`, `runs-20261122-0845.jsonl`. The runs file holds the raw answers, contexts and scores, so `--score` can re-score them.
+- The two smoke-run files and the logs were scratch and were deleted.
+- Carried into Phase 8: the 10-minute RAGAS judge timeout left one score blank (8.4/8.5 can raise it for a re-run); the intent classifier sends two non-medical-sounding MedQuAD questions (alcohol production, Medicare) to `out_of_scope`.

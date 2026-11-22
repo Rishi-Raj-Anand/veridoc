@@ -84,7 +84,7 @@ differs from the prose above, this table wins:
 | `react-router` **8.5.2** | since v7 `react-router` is the package to import; `react-router-dom` is a deprecated re-export |
 | Vite **8.3.8**, React **19.3.1** | current majors |
 | `email-validator` **2.4.0** | Pydantic's `EmailStr` needs it (pulls `dnspython` + `idna`); syntax-only, no DNS lookups on the request path. It rejects special-use domains such as `.local`, so **login deliberately takes a plain `str`** — the seeded admin may use `admin@veridoc.local` |
-| `ragas` **0.4.4** | kept in an optional `eval` dependency group (`uv sync --group eval`), not the default AI deps — it pulls in langchain and datasets and is only needed for task 7.2. The judge reaches Ollama through our own adapter (§13), not RAGAS' LangChain/OpenAI providers |
+| `ragas` **0.4.4** | kept in an optional `eval` dependency group (`uv sync --group eval`), not the default AI deps — it pulls in langchain and datasets and is only needed for the offline evaluation (Phase 7, §13). The judge reaches Ollama through our own adapter (§13), not RAGAS' LangChain/OpenAI providers |
 
 The frontend uses a **single `tsconfig.json`** rather than Vite's three-file project-reference
 layout, because `tsc --noEmit` (what `npm run typecheck` runs) conflicts with the
@@ -894,6 +894,8 @@ Live classifier tests (`-m ollama`): 8/8 on real `qwen3:8b`, including "what abo
 - ✅ **7.3** Ablation: iteration-1-without-verifier vs the full dual-agent loop — the headline result for the report (table below).
 - ✅ Since 6B every message is classified first. Two test-set questions were routed away from `medical` (both variants alike); only RAG answers are scored.
 - ⚠️ Qdrant local mode allows one process, so **the AI service must be stopped before running the eval**; `run_ragas.py` fails fast with that explanation (exit code 2).
+
+**Final checks for Phase 7:** AI 446 tests (+13 live behind `-m ollama`; 439 + 1 skipped without the eval group), backend and frontend untouched; ruff and ruff format clean. Merged to `main` 2026-11-22 (`50b8aa5`). Plan and results: `.claude/plans/phase_7_evaluation.md`.
 
 **Gate: PASSED 2026-11-22.** The full run (55 questions × 2 variants, real `qwen3:8b` + `bge-m3` as pipeline and judge) ended with exit 0, no errors, and wrote `data/eval/results-20261122-0845.csv` and `summary-20261122-0845.csv`. Pipeline pass about 30 min, RAGAS scoring about 70 min.
 
