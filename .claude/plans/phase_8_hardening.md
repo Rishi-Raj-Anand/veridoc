@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| **Status** | ✅ **Complete: gate passed 2026-11-22** (results at the end; not yet committed or merged) |
-| **Branch** | `feature/8-hardening` from `main` (after `7af0908`) |
+| **Status** | ✅ **Complete: gate passed 2026-11-22** (results at the end) |
+| **Branch** | `feature/8-hardening` from `main` (after `7af0908`); merged to `main` 2026-11-22 (merge `c33655c`, feature commit `e929276`), then deleted |
 | **Touches** | all three services, docs, a new root `check.ps1`, a new `docs/report/` folder |
 | **New dependencies** | None. The report script is standard library only. Playwright for screenshots stays outside the repo, as in Phase 6. |
 | **New env variables** | None. Timeouts stay as module constants. All three `.env.example` files already match their `Settings` exactly (checked). |
@@ -305,3 +305,11 @@ The exploration found these gaps:
 ### Known limitations (not changed)
 - **Uncited sentences in an emergency answer.** In the chest-pain answer the Verifier passed a draft ending in two uncited sentences of general advice. It touches §7.1 and medical output. **Decision 2026-11-22: left as is for v1**; recorded in CLAUDE.md §17.
 - **Classifier routing.** Carried from Phase 7: `medquad-05` and `medquad-10` were still routed to `out_of_scope`.
+
+### Closing (2026-11-22)
+- Merged with `--no-ff`; the feature branch is deleted (it was never pushed), there are no stashes and the working tree is clean. `main` was pushed to `origin`.
+- Final checks: `.\check.ps1 -Live` 12/12 PASS. AI 484 tests (+13 live), backend 202, frontend 63.
+- CLAUDE.md updated: §5, §6.7, §9 (error causes, upload limits endpoint, health `knowledge_base`), §12 (`check.ps1`, report command, `ollama ps` note), §17 (gate, live results, performance, the known limitation).
+- Kept, git-ignored, in `data/eval/`: the Phase 7 run (`*-20261122-0845.*`) and the 8.4 performance run (`*-20261122-1111.*`). Both are the inputs `docs/report/README.md` names.
+- Removed: `frontend/dist`, pytest/ruff caches and `__pycache__` folders. Also removed from the scratchpad: the throwaway stack's data and logs, the `playwright-core` install, and the 30/40 MB test files. All services are stopped.
+- With Phase 8 merged, every v1 milestone in §15 is done.

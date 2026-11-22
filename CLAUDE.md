@@ -718,6 +718,8 @@ uv run python -m ai_service.eval.run_ragas             # both variants + RAGAS
 Finish and test each milestone before starting the next. **§17 breaks these milestones
 into commit-sized tasks with per-phase gates — work from there.**
 
+**Status 2026-11-22: all nine milestones are done (Phases 0–8 plus 6B); v1 is complete.** Any new work is outside the v1 plan: check §1 "Out of scope" and ask first.
+
 ---
 
 ## 16. Rules for Claude
@@ -997,6 +999,8 @@ Regressions were checked too: verified answer with a `disease.md` citation, smal
 - Both models ran at 100% GPU (`qwen3:8b` 6.2 GB, `bge-m3` 689 MB, `num_ctx` 8192), each resident only between swaps (§6.8).
 
 Tables: `docs/report/metrics.md`. Plan and results: `.claude/plans/phase_8_hardening.md`.
+
+**Final checks for Phase 8:** `.\check.ps1 -Live` 12/12 PASS. AI 484 tests (+13 live behind `-m ollama`), backend 202, frontend 63. Merged to `main` 2026-11-22 (`c33655c`) and pushed to `origin`. **With Phase 8, every v1 milestone in §15 is complete.**
 
 ### Work split (two developers)
 
