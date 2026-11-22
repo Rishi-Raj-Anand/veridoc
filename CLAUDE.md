@@ -84,7 +84,7 @@ differs from the prose above, this table wins:
 | `react-router` **8.5.2** | since v7 `react-router` is the package to import; `react-router-dom` is a deprecated re-export |
 | Vite **8.3.8**, React **19.3.1** | current majors |
 | `email-validator` **2.4.0** | Pydantic's `EmailStr` needs it (pulls `dnspython` + `idna`); syntax-only, no DNS lookups on the request path. It rejects special-use domains such as `.local`, so **login deliberately takes a plain `str`** — the seeded admin may use `admin@veridoc.local` |
-| `ragas` **0.4.4** | kept in an optional `eval` dependency group (`uv sync --group eval`), not the default AI deps — it pulls in langchain and datasets and is only needed for task 7.2 |
+| `ragas` **0.4.4** | kept in an optional `eval` dependency group (`uv sync --group eval`), not the default AI deps — it pulls in langchain and datasets and is only needed for task 7.2. The judge reaches Ollama through our own adapter (§13), not RAGAS' LangChain/OpenAI providers |
 
 The frontend uses a **single `tsconfig.json`** rather than Vite's three-file project-reference
 layout, because `tsc --noEmit` (what `npm run typecheck` runs) conflicts with the
@@ -182,7 +182,8 @@ veridoc/
     │   ├── prompts/           # *.md prompt templates (never inline long prompts)
     │   ├── llm/               # ollama_client.py (single wrapper for all calls)
     │   ├── memory/            # chat_store.py (data/chats)
-    │   └── eval/              # run_ragas.py, testset.jsonl
+    │   ├── runtime.py         # builds stores + agents + pipeline; shared by main.py and the eval
+    │   └── eval/              # testset.py, testset.jsonl (+ .example), ragas_adapter.py, run_ragas.py
     └── tests/
 ```
 
@@ -590,23 +591,48 @@ uv run python -m ai_service.ingestion.csv_to_md path\to\diseases.csv
 - **Table layout:** `--layout table` keeps a single Markdown table, which suits narrow data; the chunker splits it on row boundaries (§6.1).
 - **Encoding:** the CSV must be UTF-8 (an Excel BOM is fine). Comma, semicolon, tab and pipe delimiters are detected.
 
-**RAGAS evaluation**
+**RAGAS evaluation** — Ollama running, the **AI service stopped** (one Qdrant process, §6.8)
 ```powershell
 cd ai
-uv run python -m ai_service.eval.run_ragas
+uv sync --group eval                                   # once: RAGAS is an optional group
+uv run python -m ai_service.eval.run_ragas --check     # validate testset.jsonl (works while the service runs)
+uv run python -m ai_service.eval.run_ragas             # both variants + RAGAS
+# options: --variant full|single_pass|both | --limit N | --no-ragas | --score data\eval\runs-<ts>.jsonl
 ```
 
 ---
 
 ## 13. Evaluation (RAGAS)
 
-- Test set: `ai/ai_service/eval/testset.jsonl`, 30–50 lines, written by the team from the uploaded documents:
+- Test set: `ai/ai_service/eval/testset.jsonl`, 30–50 lines, written by the team from the uploaded documents (not model-generated):
   `{"question": "...", "reference": "ground-truth answer", "source": "filename.pdf"}`.
-- The script runs each question through the **same pipeline as production** (call the LangGraph pipeline directly, not over HTTP), collecting answer + retrieved contexts.
-- Metrics: **Faithfulness**, **Answer/Response Relevancy**, **Context Precision** (with reference).
-- Judge LLM and embeddings: the same Ollama models via RAGAS' LangChain wrappers. Pin the `ragas` version in `pyproject.toml` and follow that version's API (it changed significantly across releases).
+  - `source` is the filename **as indexed** (`disease.md`, not `2_disease.md`).
+  - Optional `id`, and `expect: "fallback"` for an off-corpus health question the pipeline should refuse. Such a row may have `"source": null`. It is reported as a refusal rate and not scored by RAGAS; `fallback` and `out_of_scope` both count as a correct refusal.
+  - `testset.example.jsonl` shows the format, and `run_ragas --check` validates the file against the docstore.
+- The script runs each question through the **same pipeline as production**: `runtime.build_runtime`, which `main.py` also uses, then `run_turn(store=None)` in-process. It never goes over HTTP. Two variants:
+  - `full`: the shipped loop.
+  - `single_pass`: `verify_drafts=False` with `MAX_ITERATIONS=1`, the Phase 3 guards and no Verifier. **Evaluation only**; a test enforces that the server never builds it.
+- Metrics: **Faithfulness**, **Answer/Response Relevancy**, **Context Precision** (with reference). RAGAS 0.4.4's legacy metrics with `evaluate()`.
+  - Only answers to in-corpus `medical` questions are scored, with the §7.2 notice stripped.
+  - Means are also reported over the **paired** subset (questions both variants answered), so the ablation compares like with like.
+- Judge LLM and embeddings: the same Ollama models through `eval/ragas_adapter.py`, a `BaseRagasLLM` / `BaseRagasEmbeddings` adapter over `ollama_client.py`. So §6.6 holds for the judge too (`num_ctx`, `think=False`), and there is no LangChain/OpenAI client.
+  - One worker (`max_workers=1`).
+  - A single completion runs at temperature 0. Response Relevancy's n=3 questions use the temperature RAGAS asks for.
+  - Every metric gets the judge explicitly, because `evaluate()` silently falls back to OpenAI for a metric without one.
+  - RAGAS telemetry is switched off (`RAGAS_DO_NOT_TRACK`, set in `eval/__init__.py`).
+  - `ragas` stays pinned in the optional `eval` group; follow that version's API.
 - Also report pipeline stats: verified rate, fallback rate, average iterations, average latency.
-- Output: `data/eval/results-<YYYYMMDD-HHMM>.csv` + a printed summary.
+- Also reported:
+  - mean / median / p95 latency
+  - the refusal rate on off-corpus rows
+  - the questions the classifier routed away from `medical`
+  - how often an answer cites the document its question came from
+- Output in `data/eval/`:
+  - `runs-<ts>.jsonl`: raw rows, appended as they arrive. `--score` re-scores it without re-running the pipeline.
+  - `results-<YYYYMMDD-HHMM>.csv`: one row per question and variant.
+  - `summary-<ts>.csv`.
+  - A printed summary.
+- Runtime: about 1.5–2.5 h for 40 questions × 2 variants on the §2 laptop.
 - Note in reports: a local 8B judge is weaker than GPT-4-class judges; compare runs relatively, not as absolute truth.
 - Useful ablation for the report: single-pass RAG (iteration 1, no verifier) vs full dual-agent loop.
 
@@ -863,11 +889,35 @@ Live classifier tests (`-m ollama`): 8/8 on real `qwen3:8b`, including "what abo
 
 ### Phase 7 — Evaluation (M8)
 
-- **7.1** `eval/testset.jsonl` — 30–50 hand-written question / reference / source rows taken from the uploaded documents (team work, not model-generated).
-- **7.2** `eval/run_ragas.py` — calls the LangGraph pipeline directly, pinned `ragas`, Ollama judge + embeddings, writes `data/eval/results-<ts>.csv`, prints Faithfulness / Response Relevancy / Context Precision **plus** verified rate, fallback rate, average iterations, average latency.
-- **7.3** Ablation: iteration-1-without-verifier vs the full dual-agent loop — this is the headline result for the report.
-- Since 6B every message is classified first: report how many test-set questions the classifier routed away from `medical` (it should be none), and score only the RAG answers.
-- ⚠️ Qdrant local mode allows one process, so **the AI service must be stopped before running the eval**. `run_ragas.py` should fail fast with that exact explanation if it cannot acquire the storage lock.
+- ✅ **7.1** `eval/testset.jsonl` — 55 rows written by the team from the uploaded documents: 10 each from `medquad1.csv`, `disease.md`, the WHO essential-medicines PDF, `where_there_is_no_doctor.pdf` and `standard-treatment-guidelines.pdf`, plus 5 off-corpus health questions (`expect: fallback`). Tooling: format, `testset.example.jsonl`, `--check` validator.
+- ✅ **7.2** `eval/run_ragas.py` — calls the LangGraph pipeline directly, pinned `ragas`, Ollama judge + embeddings, writes `data/eval/results-<ts>.csv`, prints Faithfulness / Response Relevancy / Context Precision **plus** verified rate, fallback rate, average iterations, average latency.
+- ✅ **7.3** Ablation: iteration-1-without-verifier vs the full dual-agent loop — the headline result for the report (table below).
+- ✅ Since 6B every message is classified first. Two test-set questions were routed away from `medical` (both variants alike); only RAG answers are scored.
+- ⚠️ Qdrant local mode allows one process, so **the AI service must be stopped before running the eval**; `run_ragas.py` fails fast with that explanation (exit code 2).
+
+**Gate: PASSED 2026-11-22.** The full run (55 questions × 2 variants, real `qwen3:8b` + `bge-m3` as pipeline and judge) ended with exit 0, no errors, and wrote `data/eval/results-20261122-0845.csv` and `summary-20261122-0845.csv`. Pipeline pass about 30 min, RAGAS scoring about 70 min.
+
+| | Full dual-agent loop | Single-pass (iteration 1, no Verifier) |
+|---|---|---|
+| In-corpus questions answered | **96%** (48/50) | 90% (45/50) |
+| Fell back on an in-corpus question | 0% | 6% |
+| Off-corpus questions refused | 100% (5/5) | 100% (5/5) |
+| **Faithfulness** | **0.97** | 0.92 |
+| Faithfulness, the 45 questions both answered | **0.96** | 0.92 |
+| Answer Relevancy | 0.88 | 0.88 |
+| Context Precision | 0.93 | 0.94 |
+| Answers with Faithfulness < 0.5 | **0** | 2 |
+| Average iterations | 1.30 | 1.00 |
+| Latency mean / median / p95 | 17.2 / 16.3 / 36.6 s | 13.7 / 13.9 / 16.1 s |
+| Cites the expected source | 88% | 89% |
+
+Reading the table:
+- **The Verifier caught the bad drafts.** On three questions the single-pass answer was unfaithful (`disease-03` 0.00, `wtnd-10` 0.00, `stg-09` 0.55). The full loop failed those drafts, escalated, and answered from the wider context at 0.90, 0.67 and 1.00.
+- **Escalation recovers answers.** Three more questions (`disease-05`, `wtnd-01`, `wtnd-05`) gave an uncited draft at iteration 1, so the single pass fell back. The full loop escalated and answered them at Faithfulness 1.0.
+- **Cost:** about 3.5 s more per answer on average. The worst case about doubles it (the second iteration's model swap). 6 of the 50 in-corpus questions escalated.
+- **Relevancy and Context Precision are equal**, as expected: the Verifier changes whether a draft is released, not what is retrieved at iteration 1.
+- **Classifier:** `medquad-05` (alcohol production) and `medquad-10` (Medicare eligibility) were classified `out_of_scope` in both variants. They are MedQuAD entries but do not read as medical questions, so this is reported as a limitation of the intent classifier, not changed.
+- **Caveats:** one judge call timed out (10-minute RAGAS timeout), leaving one full-loop answer without one metric. The 8B judge is weaker than GPT-4-class judges, so compare the two columns relatively. The sample is 50 questions on one run, so differences of a few points are not significant.
 
 ### Phase 8 — Hardening (M9)
 

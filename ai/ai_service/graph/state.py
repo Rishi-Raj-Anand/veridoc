@@ -23,7 +23,8 @@ class Attempt(TypedDict, total=False):
     mode: Literal["precision", "expansion"]
     best_score: float
     sources: int
-    outcome: Literal["low_score", "not_covered", "uncited", "pass", "fail"]
+    # "unverified" only appears in the single-pass evaluation ablation (no Verifier, §13).
+    outcome: Literal["low_score", "not_covered", "uncited", "pass", "fail", "unverified"]
     faithfulness: float
     relevance: float
     parse_failed: bool

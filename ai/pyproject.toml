@@ -23,8 +23,10 @@ dev = [
     "pytest==9.2.0",
     "pytest-asyncio==1.5.0",
 ]
-# RAGAS pulls in langchain and datasets and is only needed for task 7.2, so it is
-# kept out of the default sync. Install with:  uv sync --group eval
+# RAGAS pulls in langchain and datasets and is only needed for the offline evaluation
+# (ai_service/eval, CLAUDE.md §13), so it is kept out of the default sync. Install with:
+#   uv sync --group eval
+# The judge reaches Ollama through eval/ragas_adapter.py, never RAGAS' OpenAI defaults.
 eval = [
     "ragas==0.4.4",
 ]

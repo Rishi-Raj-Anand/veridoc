@@ -16,6 +16,10 @@ always medical, so an emergency is never small-talked or declined.
 evict the LLM (§6.8). Every path that cannot produce a verified answer ends in ``fallback``;
 an unverified draft is never returned. ``run_turn`` loads the session history before the graph
 and saves the exchange after it, so the nodes stay free of file I/O.
+
+``verify_drafts=False`` builds the single-pass ablation (iteration 1, no Verifier) that the
+offline evaluation compares against (CLAUDE.md §13). It is **evaluation-only**: the server
+never passes it, and a test enforces that, so users only ever see verified answers (§7).
 """
 
 from __future__ import annotations
@@ -76,6 +80,7 @@ def build_pipeline(
     classifier: IntentClassifier,
     smalltalk: SmallTalk,
     behaviour: BehaviourStore,
+    verify_drafts: bool = True,
 ) -> CompiledStateGraph:
     max_iterations = settings.max_iterations
 
@@ -192,7 +197,17 @@ def build_pipeline(
         elif not used:
             outcome = "uncited"
         update: PipelineState = {"draft": draft, "draft_outcome": outcome}
-        if outcome != "ok":
+        if outcome == "ok" and not verify_drafts:
+            update["attempts"] = [
+                {
+                    "iteration": state["iteration"],
+                    "mode": state["retrieval_mode"],
+                    "best_score": state["best_score"],
+                    "sources": len(state["sources"]),
+                    "outcome": "unverified",
+                }
+            ]
+        elif outcome != "ok":
             logger.info(
                 "iteration %d: draft is %s, skipping the Verifier", state["iteration"], outcome
             )
@@ -207,9 +222,12 @@ def build_pipeline(
             ]
         return update
 
-    def after_generate(state: PipelineState) -> Literal["verify", "escalate", "fallback"]:
+    def after_generate(
+        state: PipelineState,
+    ) -> Literal["verify", "finalize", "escalate", "fallback"]:
         if state["draft_outcome"] == "ok":
-            return "verify"
+            # The single-pass ablation (evaluation only) skips the audit entirely.
+            return "verify" if verify_drafts else "finalize"
         return after_failure(state)
 
     def verify(state: PipelineState) -> PipelineState:
@@ -281,7 +299,9 @@ def build_pipeline(
     graph.add_edge("decline", END)
     graph.add_edge("condense_query", "retrieve")
     graph.add_conditional_edges("retrieve", gate_route, ["generate", "escalate", "fallback"])
-    graph.add_conditional_edges("generate", after_generate, ["verify", "escalate", "fallback"])
+    graph.add_conditional_edges(
+        "generate", after_generate, ["verify", "finalize", "escalate", "fallback"]
+    )
     graph.add_conditional_edges("verify", after_verify, ["finalize", "escalate", "fallback"])
     graph.add_edge("escalate", "retrieve")
     graph.add_edge("finalize", END)
