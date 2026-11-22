@@ -132,6 +132,11 @@ class VectorStore:
             )
         return hits
 
+    def count(self) -> int:
+        """Every child chunk in the collection (0 means an empty knowledge base)."""
+        with self._lock:
+            return self._client.count(COLLECTION, exact=True).count
+
     def count_document(self, doc_id: int) -> int:
         with self._lock:
             return self._client.count(

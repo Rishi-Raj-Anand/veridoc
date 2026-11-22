@@ -1,0 +1,4 @@
+// Format examples only, never run by default. Write the real rows in testset.jsonl.
+{"id": "example-cold-symptoms", "question": "What are the common symptoms of the common cold?", "reference": "Runny or stuffy nose, sneezing, sore throat, mild cough and low-grade fever.", "source": "disease.md"}
+{"id": "example-dengue-treatment", "question": "How is dengue fever treated, and which painkillers should be avoided?", "reference": "There is no specific antiviral cure; it is managed with strict hydration, rest and paracetamol, avoiding NSAIDs and aspirin because of the bleeding risk.", "source": "disease.md"}
+{"id": "example-off-corpus", "question": "What is the success rate of LASIK eye surgery?", "reference": "Not covered by the uploaded references; the pipeline should refuse with the fallback.", "source": null, "expect": "fallback"}

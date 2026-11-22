@@ -164,6 +164,7 @@ Stop-Process -Id <OwningProcess> -Force
 |---|---|
 | Backend refuses to start: "database not initialised - run 'uv run alembic upgrade head' in backend/" | The database is not migrated. Run that command in `backend\`. |
 | AI service: "could not open Qdrant local storage" | Another AI service (or an eval run) holds `data\vectors`. Only one process may open it: stop the other one. |
+| Evaluation: "Qdrant storage … is locked by another process" | The AI service is running. Stop it (`Ctrl+C`) before an evaluation run; `--check` works while it runs. |
 | Health shows `ollama: down` | Ollama is not running. Start the app or run `ollama serve`. |
 | Health shows `missing: ["qwen3:8b"]` (or `bge-m3`) | The model is not pulled. Run `ollama pull <model>`. |
 | Health shows `degraded` / chat says "Doctor AI is unavailable" | The AI service is not running, or `INTERNAL_API_KEY` differs between `backend\.env` and `ai\.env`. |
@@ -198,7 +199,7 @@ veridoc/
 │   ├── docstore.db              #   parent chunks (bigger context used on retries)
 │   ├── chats/                   #   one <session_id>.json transcript per chat session
 │   ├── behaviour.json           #   admin-edited assistant behaviour (tone, scope, guardrails)
-│   └── eval/                    #   RAGAS evaluation results (Phase 7)
+│   └── eval/                    #   evaluation output: runs-*.jsonl, results-*.csv, summary-*.csv
 │
 ├── frontend/                    # React + Vite + TypeScript UI           -> http://localhost:5173
 │   ├── .env.example             #   VITE_API_URL (the backend address)
@@ -272,7 +273,8 @@ veridoc/
     ├── .env.example             #   Ollama host, model names, thresholds, Top-K, chunk sizes
     ├── pyproject.toml / uv.lock #   Python 3.12 dependencies (ragas in an optional "eval" group)
     ├── ai_service/
-    │   ├── main.py              #   startup: opens Qdrant, loads prompts, builds the pipeline
+    │   ├── main.py              #   startup: opens Qdrant, then builds everything via runtime.py
+    │   ├── runtime.py           #   wires stores, agents and the pipeline (shared with the eval)
     │   ├── config.py            #   settings, plus the fixed safety texts (fallback, emergency
     │   │                        #   notice, disclaimer) and the locked safety rules
     │   ├── security.py          #   X-Internal-Key check on every route
@@ -307,7 +309,12 @@ veridoc/
     │   │   └── pipeline.py      #     the LangGraph: safety -> classify -> condense ->
     │   │                        #     retrieve -> generate -> verify -> escalate / finalize / fallback
     │   ├── llm/ollama_client.py #   the ONLY module that calls Ollama (num_ctx, no thinking, retries)
-    │   └── memory/chat_store.py #   chat transcripts in data/chats/
+    │   ├── memory/chat_store.py #   chat transcripts in data/chats/
+    │   └── eval/
+    │       ├── testset.jsonl    #     the team's hand-written questions (format: testset.example.jsonl)
+    │       ├── testset.py       #     loads and validates the test set
+    │       ├── ragas_adapter.py #     RAGAS judge + embeddings on top of ollama_client.py
+    │       └── run_ragas.py     #     the evaluation: full loop vs single-pass, RAGAS, summary
     └── tests/                   #   pytest with a fake LLM; tests marked "ollama" need the real one
 ```
 
@@ -322,6 +329,27 @@ the conversion produces:
 cd ai
 uv run python -m ai_service.ingestion.csv_to_md path\to\file.csv --underscores-to-spaces
 ```
+
+**Run the evaluation** (RAGAS and the single-pass ablation, CLAUDE.md §13). Ollama must be
+running and the AI service **stopped**, because only one process may open `data\vectors`.
+
+```powershell
+cd ai
+uv sync --group eval                                   # once: installs RAGAS
+uv run python -m ai_service.eval.run_ragas --check     # validate the test set (the service may run)
+uv run python -m ai_service.eval.run_ragas --limit 3   # quick smoke run, both variants
+uv run python -m ai_service.eval.run_ragas             # full run: ~40 questions take 1.5-2.5 h
+```
+
+Other options:
+- `--variant full|single_pass|both`
+- `--no-ragas`: pipeline stats only.
+- `--score data\eval\runs-<ts>.jsonl`: re-score an earlier run without re-running the pipeline.
+
+Results land in `data\eval\`:
+- `results-<ts>.csv`: one row per question and variant.
+- `summary-<ts>.csv`: one row per variant.
+- The same summary is printed at the end.
 
 **Quality checks**, the same ones run before every commit:
 

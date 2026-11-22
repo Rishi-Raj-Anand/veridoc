@@ -80,6 +80,11 @@ class Docstore:
             }
         return [found[pid] for pid in parent_ids if pid in found]
 
+    def filenames(self) -> set[str]:
+        """Every indexed filename (the evaluation checks test-set sources against these)."""
+        with self._connect() as conn:
+            return {row[0] for row in conn.execute("SELECT DISTINCT filename FROM parents")}
+
     def count_document(self, doc_id: int) -> int:
         with self._connect() as conn:
             return conn.execute(

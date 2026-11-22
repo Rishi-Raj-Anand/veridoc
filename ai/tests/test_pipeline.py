@@ -40,7 +40,15 @@ def v(*head: float) -> list[float]:
 class Env:
     """A tiny knowledge base: one parent whose second half is not in any retrieved child."""
 
-    def __init__(self, tmp_path: Path, llm: FakeLlm, *, low_score: bool = False, **cfg: int):
+    def __init__(
+        self,
+        tmp_path: Path,
+        llm: FakeLlm,
+        *,
+        low_score: bool = False,
+        verify_drafts: bool = True,
+        **cfg: int,
+    ):
         self.settings = Settings(_env_file=None, **cfg)
         self.llm = llm
         self.store = VectorStore(QdrantClient(":memory:"), self.settings)
@@ -78,6 +86,7 @@ class Env:
             classifier=IntentClassifier(llm, self.settings),
             smalltalk=SmallTalk(llm, self.settings, self.behaviour),
             behaviour=self.behaviour,
+            verify_drafts=verify_drafts,
         )
         self.chats = ChatStore(tmp_path / "chats")
 
@@ -512,3 +521,57 @@ def test_the_transcript_keeps_the_notice_but_history_strips_it(tmp_path: Path) -
     condense_input = llm.condense_calls[0]["messages"][1]["content"]
     assert EMERGENCY_NOTICE not in condense_input
     assert "Assistant: Use bed nets [1]." in condense_input
+
+
+# --- the single-pass ablation (evaluation only, §13) ----------------------------------
+
+
+def single_pass(tmp_path: Path, llm: FakeLlm, **kw: bool) -> Env:
+    return Env(tmp_path, llm, verify_drafts=False, max_iterations=1, **kw)
+
+
+def test_single_pass_returns_the_draft_without_calling_the_verifier(tmp_path: Path) -> None:
+    env = single_pass(tmp_path, FakeLlm(query_vector=v(1.0), reply="Use bed nets [1]."))
+
+    result = env.run(store=None)
+
+    assert (result.status, result.answer) == ("verified", "Use bed nets [1].")
+    assert env.llm.verifier_calls == []
+    assert result.iterations == 1
+    assert outcomes(result) == ["unverified"]
+
+
+def test_single_pass_falls_back_on_a_low_score_without_generating(tmp_path: Path) -> None:
+    env = single_pass(tmp_path, FakeLlm(query_vector=v(1.0), reply="x [1]."), low_score=True)
+
+    result = env.run(store=None)
+
+    assert (result.status, result.answer) == ("fallback", FALLBACK_MESSAGE)
+    assert env.llm.generator_calls == []
+    assert result.iterations == 1
+    assert outcomes(result) == ["low_score"]
+
+
+@pytest.mark.parametrize(
+    ("reply", "outcome"), [("NOT_IN_DOCUMENTS", "not_covered"), ("Use nets.", "uncited")]
+)
+def test_single_pass_falls_back_on_a_not_covered_or_uncited_draft(
+    tmp_path: Path, reply: str, outcome: str
+) -> None:
+    env = single_pass(tmp_path, FakeLlm(query_vector=v(1.0), reply=reply))
+
+    result = env.run(store=None)
+
+    assert (result.status, result.answer) == ("fallback", FALLBACK_MESSAGE)
+    assert env.llm.verifier_calls == []
+    assert len(env.llm.generator_calls) == 1
+    assert result.iterations == 1
+    assert outcomes(result) == [outcome]
+
+
+def test_the_full_loop_still_verifies_by_default(tmp_path: Path) -> None:
+    env = Env(tmp_path, FakeLlm(query_vector=v(1.0), reply="Use bed nets [1]."))
+
+    env.run(store=None)
+
+    assert len(env.llm.verifier_calls) == 1
