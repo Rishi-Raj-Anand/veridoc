@@ -331,4 +331,3 @@ cd backend ; uv run ruff check . ; uv run ruff format --check . ; uv run pytest 
 cd frontend ; npm run lint ; npm run typecheck ; npm run test ; cd ..
 ```
 
-Full details live in [CLAUDE.md](CLAUDE.md) §12.
