@@ -22,11 +22,18 @@ export interface QdrantHealth {
   error: string | null;
 }
 
+export interface KnowledgeBaseHealth {
+  /** Indexed child chunks; null when the AI service could not count them. */
+  chunks: number | null;
+}
+
 export interface AiServiceHealth {
   status: HealthStatus;
   ollama: OllamaHealth;
   models: ModelsHealth;
   qdrant: QdrantHealth;
+  /** Added in Phase 8; optional so an older AI service still type-checks at runtime. */
+  knowledge_base?: KnowledgeBaseHealth;
 }
 
 export interface HealthResponse {

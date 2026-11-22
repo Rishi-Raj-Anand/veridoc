@@ -168,6 +168,12 @@ Stop-Process -Id <OwningProcess> -Force
 | Health shows `ollama: down` | Ollama is not running. Start the app or run `ollama serve`. |
 | Health shows `missing: ["qwen3:8b"]` (or `bge-m3`) | The model is not pulled. Run `ollama pull <model>`. |
 | Health shows `degraded` / chat says "Doctor AI is unavailable" | The AI service is not running, or `INTERNAL_API_KEY` differs between `backend\.env` and `ai\.env`. |
+| Chat says "Doctor AI's language model is offline" | Ollama is not running or a model is not pulled. The **System status** card on `/admin` says which, with the command to fix it. The AI service also logs it at startup. |
+| Chat says "Doctor AI took too long to answer" | An Ollama call hung for 120 s, or the whole turn took over 300 s. Check `ollama ps` (a model on CPU instead of 100% GPU is very slow), then try again. |
+| Every medical question gets "I couldn't find verified information…" | Either the question is not covered by the documents (by design), or **no documents are indexed**: the status card then says "No documents indexed". Upload a document on `/admin`. |
+| "Could not reach the VeriDoc server" | The backend (port 8000) is not running, or `VITE_API_URL` in `frontend\.env` points somewhere else. |
+| Upload: "larger than the N MB upload limit" | Split the file, or raise `MAX_UPLOAD_MB` in `backend\.env` and restart the backend. The admin page reads the limit from the backend, so nothing else needs changing. |
+| Upload `failed`: "indexing failed unexpectedly (…) - see the AI service log" | Something other than the file or Ollama went wrong while indexing. The full traceback is in the AI service window. |
 | A brand-new, empty `data` folder appears in the wrong place | A service was started from the wrong folder. Start each one from its own folder; both log the resolved data path at startup. |
 | `npm : running scripts is disabled on this system` | PowerShell execution policy. Run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or use `npm.cmd run dev`. |
 | `Port 5173 is already in use` | An old Vite window is still running. Close it or free the port (section 4). |
@@ -188,6 +194,8 @@ veridoc/
 ├── README.md                    # project overview
 ├── CLAUDE.md                    # the spec: architecture, rules, API contracts, task plan (read first)
 ├── start.md                     # this file: setup, start, check, stop, troubleshoot
+├── check.ps1                    # runs every quality check, prints a PASS/FAIL table
+├── docs/report/                 # report assets: diagrams, metric tables, charts, screenshots
 ├── .gitignore                   # keeps data/, .env, .venv/, node_modules/ out of git
 ├── .gitattributes               # line-ending normalisation (* text=auto)
 ├── .claude/plans/               # per-phase plans with recorded test and live-gate results
@@ -215,7 +223,9 @@ veridoc/
 │       ├── index.css            #   Tailwind import, plus the 404 heartbeat animation
 │       ├── constants.ts         #   accepted file types, length limits, disclaimer text
 │       ├── api/                 #   EVERY backend call lives here, fully typed
-│       │   ├── client.ts        #     fetch wrapper: bearer token, sign out on 401, error text
+│       │   ├── client.ts        #     fetch wrapper: bearer token, sign out on 401, timeouts,
+│       │   │                    #     one friendly message when the backend is unreachable
+│       │   ├── queryClient.ts   #     TanStack Query setup: never retry a 4xx
 │       │   ├── auth.ts          #     register / login / me
 │       │   ├── chat.ts          #     send a message -> ChatResponse
 │       │   ├── admin.ts         #     list / upload / delete documents
@@ -251,6 +261,7 @@ veridoc/
 │   ├── alembic.ini, alembic/    #   database migrations; versions/ holds the schema history
 │   ├── app/
 │   │   ├── main.py              #   app factory, CORS, startup (create data/, seed the admin)
+│   │   ├── middleware.py        #   early 413 for oversized uploads, JSON 500 for crashes
 │   │   ├── config.py            #   all settings from .env (the only place that reads them)
 │   │   ├── db.py                #   SQLAlchemy engine and sessions (foreign keys enforced)
 │   │   ├── deps.py              #   get_db, current user, require_admin
@@ -266,7 +277,7 @@ veridoc/
 │   │       ├── auth_service.py  #     Argon2 passwords, JWTs, admin seeding
 │   │       ├── document_service.py  # upload checks (type, size, duplicates), file storage
 │   │       ├── chat_service.py  #     records which user owns each chat session
-│   │       └── ai_client.py     #     HTTP client for the AI service (timeouts, friendly errors)
+│   │       └── ai_client.py     #     HTTP client for the AI service (timeouts, error codes)
 │   └── tests/                   #   pytest: auth, uploads, admin guards, chat, AI client, migrations
 │
 └── ai/                          # FastAPI + LangGraph: all AI work           -> 127.0.0.1:8001
@@ -282,7 +293,8 @@ veridoc/
     │   ├── contracts.py         #   shared Intent and ChatStatus values
     │   ├── behaviour.py         #   admin-editable behaviour, saved in data/behaviour.json
     │   ├── storage.py           #   atomic file writes (temp file + replace)
-    │   ├── routers/             #   /internal/ingest + documents, /chat, /behaviour, /health
+    │   ├── routers/             #   /internal/ingest + documents, /chat, /behaviour, /health;
+    │   │                        #   errors.py adds the X-Error-Code header to Ollama 503s
     │   ├── ingestion/
     │   │   ├── parsers.py       #     PDF / DOCX / TXT / MD / CSV -> text with page or section numbers
     │   │   ├── csv_to_md.py     #     CSV -> Markdown, one section per entry (also a CLI)
@@ -314,7 +326,8 @@ veridoc/
     │       ├── testset.jsonl    #     the team's hand-written questions (format: testset.example.jsonl)
     │       ├── testset.py       #     loads and validates the test set
     │       ├── ragas_adapter.py #     RAGAS judge + embeddings on top of ollama_client.py
-    │       └── run_ragas.py     #     the evaluation: full loop vs single-pass, RAGAS, summary
+    │       ├── run_ragas.py     #     the evaluation: full loop vs single-pass, RAGAS, summary
+    │       └── report.py        #     builds docs/report tables and SVG charts from the CSVs
     └── tests/                   #   pytest with a fake LLM; tests marked "ollama" need the real one
 ```
 
@@ -351,11 +364,15 @@ Results land in `data\eval\`:
 - `summary-<ts>.csv`: one row per variant.
 - The same summary is printed at the end.
 
-**Quality checks**, the same ones run before every commit:
+**Quality checks**, the same ones run before every commit. From the repository root:
 
 ```powershell
-cd ai ; uv run ruff check . ; uv run ruff format --check . ; uv run pytest ; cd ..
-cd backend ; uv run ruff check . ; uv run ruff format --check . ; uv run pytest ; cd ..
-cd frontend ; npm run lint ; npm run typecheck ; npm run test ; cd ..
+.\check.ps1                 # all three services; prints a PASS/FAIL table, exit 1 on any failure
+.\check.ps1 -Only backend   # one service: ai, backend or frontend
+.\check.ps1 -Live -Only ai  # also the AI tests that need a running Ollama
 ```
+
+It runs `ruff check`, `ruff format --check` and `pytest` in `ai\` and `backend\`, then
+`lint`, `typecheck`, `format:check`, `test` and `build` in `frontend\`. If PowerShell blocks
+the script, run `powershell -ExecutionPolicy Bypass -File .\check.ps1`.
 

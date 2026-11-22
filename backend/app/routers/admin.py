@@ -13,7 +13,7 @@ from app.config import Settings, get_settings
 from app.db import get_sessionmaker
 from app.deps import AdminUser, DbSession
 from app.models import Document
-from app.schemas.document import DocumentResponse
+from app.schemas.document import DocumentResponse, UploadLimits
 from app.services import ai_client, document_service
 from app.services.ai_client import AiServiceError
 from app.services.document_service import UploadRejected
@@ -93,6 +93,18 @@ def upload_document(
         raise HTTPException(exc.status_code, detail=exc.detail) from exc
     background.add_task(run_ingest, document.id)
     return document
+
+
+@router.get("/limits", response_model=UploadLimits, summary="Upload size and type limits")
+def upload_limits(
+    _admin: AdminUser, settings: Annotated[Settings, Depends(get_settings)]
+) -> UploadLimits:
+    """Lets the admin page refuse an oversized file before sending it, using the real
+    ``MAX_UPLOAD_MB`` rather than a copy of the default that could drift from ``.env``."""
+    return UploadLimits(
+        max_upload_mb=settings.max_upload_mb,
+        accepted_extensions=sorted(document_service.ALLOWED_EXTENSIONS),
+    )
 
 
 @router.get("", response_model=list[DocumentResponse], summary="List documents with status")

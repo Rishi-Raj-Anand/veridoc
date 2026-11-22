@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from qdrant_client import QdrantClient
@@ -17,6 +18,7 @@ from ai_service.behaviour import BehaviourStore
 from ai_service.config import EMERGENCY_NOTICE, FALLBACK_MESSAGE, Settings
 from ai_service.graph.pipeline import PipelineResult, build_pipeline, run_turn
 from ai_service.ingestion.chunker import ChildChunk, ParentChunk
+from ai_service.llm import ollama_client
 from ai_service.memory.chat_store import ChatStore, SessionOwnershipError
 from ai_service.retrieval.docstore import Docstore
 from ai_service.retrieval.retriever import Retriever
@@ -315,6 +317,51 @@ def test_an_empty_knowledge_base_falls_back_without_calling_the_llm(tmp_path: Pa
 
     assert (result.status, result.answer) == ("fallback", FALLBACK_MESSAGE)
     assert llm.rag_chat_calls == []  # only the intent classifier ran; nothing was generated
+    # Phase 8.1: nothing is embedded either (no bge-m3 swap), and the cause is recorded.
+    assert "embed" not in llm.events
+    assert outcomes(result) == ["empty_kb"]
+    assert result.iterations == 1
+
+
+def test_every_attempt_records_its_duration(tmp_path: Path) -> None:
+    llm = FakeLlm(query_vector=v(1.0), reply="Use bed nets [1].", verifier_replies=[FAIL_MISSING])
+
+    result = Env(tmp_path, llm).run()
+
+    assert len(result.attempts) == 3
+    assert all(a["seconds"] >= 0 for a in result.attempts)
+
+
+def test_the_transcript_keeps_the_llm_calls_of_the_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    llm = FakeLlm(query_vector=v(1.0), reply="Use bed nets [1].")
+    original = llm.chat
+
+    def recording_chat(messages: list[dict[str, str]], **kwargs: Any) -> str:
+        # The fake bypasses OllamaClient, so record the call the way the real client does.
+        ollama_client._record(
+            {
+                "purpose": kwargs.get("purpose", "chat"),
+                "model": "qwen3:8b",
+                "prompt_tokens": 1200,
+                "completion_tokens": 40,
+                "seconds": 0.1,
+            }
+        )
+        return original(messages, **kwargs)
+
+    monkeypatch.setattr(llm, "chat", recording_chat)
+    env = Env(tmp_path, llm)
+
+    result = env.run()
+
+    purposes = [c["purpose"] for c in result.llm_calls]
+    assert purposes == ["classify", "generate", "verify"]
+    assert result.max_prompt_tokens == 1200
+    saved = env.chats.load(SESSION, 7)
+    assert saved is not None
+    assert [c["purpose"] for c in saved.turns[-1].llm_calls or []] == purposes
 
 
 def test_the_iteration_count_never_exceeds_the_cap(tmp_path: Path) -> None:

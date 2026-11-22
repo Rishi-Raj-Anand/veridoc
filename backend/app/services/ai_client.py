@@ -20,15 +20,29 @@ from app.schemas.health import AiServiceHealth
 
 logger = logging.getLogger(__name__)
 
-HEALTH_TIMEOUT_SECONDS = 5.0
+# Above the AI service's 3 s Ollama check, so a hung Ollama reads "Ollama down", not
+# "AI service unreachable".
+HEALTH_TIMEOUT_SECONDS = 8.0
 DELETE_TIMEOUT_SECONDS = 30.0
 # A turn can load models and run up to three retrieval rounds (§6.8: 30-90 s); stay well above.
 CHAT_TIMEOUT_SECONDS = 300.0
 BEHAVIOUR_TIMEOUT_SECONDS = 10.0
 
 
+ERROR_CODE_HEADER = "X-Error-Code"
+
+
 class AiServiceError(RuntimeError):
-    """The AI service was unreachable, refused us, or sent an unexpected body."""
+    """The AI service was unreachable, refused us, or sent an unexpected body.
+
+    ``code`` names the cause so callers can pick a message without parsing text:
+    ``ai_unreachable`` and ``ai_timeout`` are decided here; ``ollama_unreachable``,
+    ``model_missing`` and ``ollama_timeout`` come from the AI service's ``X-Error-Code``.
+    """
+
+    def __init__(self, message: str, code: str = "ai_error") -> None:
+        super().__init__(message)
+        self.code = code
 
 
 def internal_headers(settings: Settings) -> dict[str, str]:
@@ -55,20 +69,40 @@ async def fetch_health(settings: Settings) -> AiServiceHealth:
         raise AiServiceError(
             f"AI service returned HTTP {exc.response.status_code} ({detail})"
         ) from exc
+    except httpx.ConnectTimeout as exc:
+        raise AiServiceError(
+            f"AI service unreachable at {url}: {type(exc).__name__}", "ai_unreachable"
+        ) from exc
+    except httpx.TimeoutException as exc:
+        raise AiServiceError(
+            f"AI service did not answer the health check within {HEALTH_TIMEOUT_SECONDS:.0f} s",
+            "ai_timeout",
+        ) from exc
     except httpx.HTTPError as exc:
-        raise AiServiceError(f"AI service unreachable at {url}: {type(exc).__name__}") from exc
+        raise AiServiceError(
+            f"AI service unreachable at {url}: {type(exc).__name__}", "ai_unreachable"
+        ) from exc
     except (ValidationError, ValueError) as exc:
         message = f"AI service sent an unexpected health body: {type(exc).__name__}"
         raise AiServiceError(message) from exc
 
 
 def _error_detail(response: httpx.Response) -> str | None:
-    """The ``detail`` string of a FastAPI error body, if there is one."""
+    """The ``detail`` of a FastAPI error body, if there is one.
+
+    A validation error's list of ``{"msg": ...}`` items is joined with "; " (the frontend's
+    rule), so a 422 from the AI service never collapses to "unexpected error".
+    """
     try:
         detail = response.json().get("detail")
     except (ValueError, AttributeError):
         return None
-    return detail if isinstance(detail, str) else None
+    if isinstance(detail, str):
+        return detail
+    if isinstance(detail, list):
+        messages = [str(i["msg"]) for i in detail if isinstance(i, dict) and "msg" in i]
+        return "; ".join(messages) or None
+    return None
 
 
 async def _call(
@@ -91,16 +125,24 @@ async def _call(
             response = await client.request(
                 method, url, headers=internal_headers(settings), json=json
             )
+    except httpx.ConnectTimeout as exc:  # never connected: the same as refused
+        raise AiServiceError(
+            f"AI service unavailable at {settings.ai_service_url} ({type(exc).__name__}) - "
+            "is it running?",
+            "ai_unreachable",
+        ) from exc
     except (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as exc:
         # The service is reachable but did not answer in time: saying "is it running?" here
         # would send the admin looking for the wrong problem.
         raise AiServiceError(
-            timeout_detail or f"AI service did not answer within {timeout_seconds:.0f} seconds"
+            timeout_detail or f"AI service did not answer within {timeout_seconds:.0f} seconds",
+            "ai_timeout",
         ) from exc
     except httpx.HTTPError as exc:
         raise AiServiceError(
             f"AI service unavailable at {settings.ai_service_url} ({type(exc).__name__}) - "
-            "is it running?"
+            "is it running?",
+            "ai_unreachable",
         ) from exc
     if response.status_code == 401:
         raise AiServiceError("AI service rejected the request (wrong INTERNAL_API_KEY)")
@@ -109,7 +151,8 @@ async def _call(
         raise AiServiceError(
             f"{detail} (AI service HTTP {response.status_code})"
             if response.status_code >= 500
-            else detail
+            else detail,
+            response.headers.get(ERROR_CODE_HEADER, "ai_error"),
         )
     return response
 

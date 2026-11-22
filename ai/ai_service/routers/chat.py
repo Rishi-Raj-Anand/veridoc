@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Annotated
 from uuid import UUID
 
@@ -16,11 +17,13 @@ from ai_service.deps import ChatStoreDep, PipelineDep
 from ai_service.graph.pipeline import run_turn
 from ai_service.llm.ollama_client import OllamaError
 from ai_service.memory.chat_store import SessionOwnershipError
+from ai_service.routers.errors import ollama_unavailable
 from ai_service.security import require_internal_key
 
 logger = logging.getLogger(__name__)
 
 MAX_MESSAGE_CHARS = 2000
+LOCK_WAIT_LOG_SECONDS = 0.5
 
 router = APIRouter(
     prefix="/internal",
@@ -74,7 +77,11 @@ async def chat(
 ) -> ChatResponse:
     try:
         # One model in VRAM: parallel turns would only make Ollama swap models (§6.8).
+        queued = time.perf_counter()
         async with _lock(request):
+            waited = time.perf_counter() - queued
+            if waited >= LOCK_WAIT_LOG_SECONDS:
+                logger.info("chat turn waited %.1fs for the previous turn", waited)
             result = await asyncio.to_thread(
                 run_turn,
                 pipeline,
@@ -89,7 +96,7 @@ async def chat(
             status.HTTP_403_FORBIDDEN, detail="session belongs to another user"
         ) from exc
     except OllamaError as exc:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+        raise ollama_unavailable(exc) from exc
     except Exception as exc:
         logger.exception("chat turn failed for session %s", body.session_id)
         raise HTTPException(

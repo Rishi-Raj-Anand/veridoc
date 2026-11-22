@@ -24,7 +24,7 @@ export function DocumentTable(props: DocumentTableProps) {
   if (props.documents.length === 0) {
     return (
       <p className="rounded-xl border border-dashed border-slate-300 bg-white p-6 text-center text-sm text-slate-500">
-        No documents yet. Upload a PDF, TXT, MD or DOCX to build the knowledge base.
+        No documents yet. Upload a PDF, TXT, MD, DOCX or CSV to build the knowledge base.
       </p>
     );
   }

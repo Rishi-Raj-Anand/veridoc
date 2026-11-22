@@ -42,6 +42,7 @@ class TurnEntry(BaseModel):
     iterations: int | None = None
     citations: list[dict[str, Any]] | None = None
     verifier_scores: list[dict[str, Any]] | None = None
+    llm_calls: list[dict[str, Any]] | None = None  # purpose, tokens, seconds (8.4)
 
 
 class Transcript(BaseModel):

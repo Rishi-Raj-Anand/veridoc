@@ -85,7 +85,12 @@ class Verifier:
         ]
         for attempt in range(1, PARSE_ATTEMPTS + 1):
             reply = strip_thinking(
-                self._llm.chat(messages, temperature=VERIFIER_TEMPERATURE, format=self._schema)
+                self._llm.chat(
+                    messages,
+                    temperature=VERIFIER_TEMPERATURE,
+                    format=self._schema,
+                    purpose="verify",
+                )
             )
             try:
                 output = _normalise(VerifierOutput.model_validate_json(reply))

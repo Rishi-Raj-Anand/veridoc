@@ -120,6 +120,7 @@ class FakeLlm(FakeEmbedder):
         smalltalk_replies: list[str] | None = None,
         embed_fails: bool = False,
         chat_fails: bool = False,
+        chat_error: OllamaError | None = None,
     ) -> None:
         super().__init__(fails=embed_fails)
         self.query_vector = query_vector or [1.0] + [0.0] * 1023
@@ -138,6 +139,7 @@ class FakeLlm(FakeEmbedder):
         )
         self._smalltalk_prompt = load_prompt("smalltalk")
         self.chat_fails = chat_fails
+        self.chat_error = chat_error
         self.chat_calls: list[dict[str, Any]] = []
         self.events: list[str] = []
 
@@ -197,8 +199,14 @@ class FakeLlm(FakeEmbedder):
         *,
         temperature: float,
         format: dict[str, Any] | None = None,
+        purpose: str = "chat",
     ) -> str:
-        call = {"messages": messages, "temperature": temperature, "format": format}
+        call = {
+            "messages": messages,
+            "temperature": temperature,
+            "format": format,
+            "purpose": purpose,
+        }
         kind = self._kind(call)
         script = {
             "verify": self._verifier_replies,
@@ -209,6 +217,8 @@ class FakeLlm(FakeEmbedder):
         }[kind]
         self.chat_calls.append(call)
         self.events.append(f"chat:{kind}")
+        if self.chat_error is not None:
+            raise self.chat_error
         if self.chat_fails:
             raise OllamaError("cannot reach Ollama at http://127.0.0.1:11434 - is it running?")
         index = len(self._calls(kind))

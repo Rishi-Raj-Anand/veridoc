@@ -43,7 +43,8 @@ from ai_service.agents.verifier import Verifier
 from ai_service.behaviour import BehaviourStore
 from ai_service.config import EMERGENCY_NOTICE, FALLBACK_MESSAGE, Settings
 from ai_service.contracts import ChatStatus, Intent
-from ai_service.graph.state import Attempt, CitationDict, PipelineState
+from ai_service.graph.state import Attempt, AttemptOutcome, CitationDict, PipelineState
+from ai_service.llm.ollama_client import LlmCall, llm_usage
 from ai_service.memory.chat_store import ChatStore, Transcript, TurnEntry, now_iso
 from ai_service.retrieval.retriever import Retriever, Source
 
@@ -62,6 +63,13 @@ class PipelineResult:
     standalone_query: str = ""
     emergency_matches: tuple[str, ...] = ()
     intent: Intent = "medical"
+    # Every Ollama call of the turn (purpose, tokens, seconds): stored, never shown (8.4).
+    llm_calls: tuple[LlmCall, ...] = ()
+
+    @property
+    def max_prompt_tokens(self) -> int | None:
+        counts = [c["prompt_tokens"] for c in self.llm_calls if c["prompt_tokens"] is not None]
+        return max(counts, default=None)
 
 
 def with_notice(answer: str, emergency: bool) -> str:
@@ -149,10 +157,39 @@ def build_pipeline(
     def after_failure(state: PipelineState) -> Literal["escalate", "fallback"]:
         return "escalate" if state["iteration"] < max_iterations else "fallback"
 
+    def attempt(state: PipelineState, outcome: AttemptOutcome) -> Attempt:
+        """The record of one iteration, timed from the start of its retrieve."""
+        return {
+            "iteration": state["iteration"],
+            "mode": state["retrieval_mode"],
+            "best_score": state["best_score"],
+            "sources": len(state["sources"]),
+            "outcome": outcome,
+            "seconds": round(time.perf_counter() - state["iteration_started"], 3),
+        }
+
     def retrieve(state: PipelineState) -> PipelineState:
+        started = time.perf_counter()
         query = state.get("query") or state["message"]
         retrieval_query = state.get("retrieval_query") or query
         iteration = state.get("iteration", 1)
+        if iteration == 1 and retriever.is_empty():
+            # Nothing to ground an answer on: fall back without loading bge-m3 (§6.8). Users
+            # get the plain §7.4 fallback; the admin sees the cause on the status card.
+            logger.warning("knowledge base is empty - upload documents on the admin page")
+            empty: PipelineState = {
+                "query": query,
+                "retrieval_query": retrieval_query,
+                "iteration": iteration,
+                "iteration_started": started,
+                "retrieval_mode": "precision",
+                "sources": [],
+                "best_score": 0.0,
+                "gate_passed": False,
+                "verification": None,
+            }
+            empty["attempts"] = [attempt({**state, **empty}, "empty_kb")]
+            return empty
         vector = state.get("query_vector")
         if vector is None or state.get("vector_query") != retrieval_query:
             vector = retriever.embed_query(retrieval_query)
@@ -164,6 +201,7 @@ def build_pipeline(
             "query_vector": vector,
             "vector_query": retrieval_query,
             "iteration": iteration,
+            "iteration_started": started,
             "retrieval_mode": result.mode,
             "sources": sources,
             "best_score": result.best_score,
@@ -172,15 +210,7 @@ def build_pipeline(
         }
         probe: PipelineState = {**state, **update}
         if gate_route(probe) != "generate":
-            update["attempts"] = [
-                {
-                    "iteration": iteration,
-                    "mode": result.mode,
-                    "best_score": result.best_score,
-                    "sources": len(sources),
-                    "outcome": "low_score",
-                }
-            ]
+            update["attempts"] = [attempt(probe, "low_score")]
         elif not result.passed_gate:
             logger.info(
                 "iteration %d: best score under the gate, letting the Verifier judge", iteration
@@ -198,28 +228,12 @@ def build_pipeline(
             outcome = "uncited"
         update: PipelineState = {"draft": draft, "draft_outcome": outcome}
         if outcome == "ok" and not verify_drafts:
-            update["attempts"] = [
-                {
-                    "iteration": state["iteration"],
-                    "mode": state["retrieval_mode"],
-                    "best_score": state["best_score"],
-                    "sources": len(state["sources"]),
-                    "outcome": "unverified",
-                }
-            ]
+            update["attempts"] = [attempt(state, "unverified")]
         elif outcome != "ok":
             logger.info(
                 "iteration %d: draft is %s, skipping the Verifier", state["iteration"], outcome
             )
-            update["attempts"] = [
-                {
-                    "iteration": state["iteration"],
-                    "mode": state["retrieval_mode"],
-                    "best_score": state["best_score"],
-                    "sources": len(state["sources"]),
-                    "outcome": outcome,
-                }
-            ]
+            update["attempts"] = [attempt(state, outcome)]
         return update
 
     def after_generate(
@@ -232,17 +246,11 @@ def build_pipeline(
 
     def verify(state: PipelineState) -> PipelineState:
         result = verifier.verify(state["query"], state["sources"], state["draft"])
-        attempt: Attempt = {
-            "iteration": state["iteration"],
-            "mode": state["retrieval_mode"],
-            "best_score": state["best_score"],
-            "sources": len(state["sources"]),
-            "outcome": "pass" if result.passed else "fail",
-            "faithfulness": result.faithfulness,
-            "relevance": result.relevance,
-            "parse_failed": result.parse_failed,
-        }
-        return {"verification": result, "attempts": [attempt]}
+        audit = attempt(state, "pass" if result.passed else "fail")
+        audit["faithfulness"] = result.faithfulness
+        audit["relevance"] = result.relevance
+        audit["parse_failed"] = result.parse_failed
+        return {"verification": result, "attempts": [audit]}
 
     def after_verify(state: PipelineState) -> Literal["finalize", "escalate", "fallback"]:
         verification = state["verification"]
@@ -313,6 +321,8 @@ def _attempt_summary(attempt: Attempt) -> str:
     text = f"i{attempt['iteration']}:{attempt['outcome']}@{attempt['best_score']:.2f}"
     if "faithfulness" in attempt:
         text += f"(f={attempt['faithfulness']:.2f},r={attempt['relevance']:.2f})"
+    if "seconds" in attempt:
+        text += f"/{attempt['seconds']:.1f}s"
     return text
 
 
@@ -335,9 +345,10 @@ def run_turn(
     asked_at = now_iso()
     transcript = store.load(session_id, user_id) if store is not None else None
     history = ChatStore.history(transcript, history_max_messages)
-    state = pipeline.invoke(
-        {"session_id": session_id, "user_id": user_id, "message": message, "history": history}
-    )
+    with llm_usage() as calls:
+        state = pipeline.invoke(
+            {"session_id": session_id, "user_id": user_id, "message": message, "history": history}
+        )
     attempts = state.get("attempts", [])
     result = PipelineResult(
         answer=state["answer"],
@@ -350,10 +361,11 @@ def run_turn(
         standalone_query=state.get("query", message),
         emergency_matches=tuple(state.get("emergency_matches", [])),
         intent=state.get("intent", "medical"),
+        llm_calls=tuple(calls),
     )
     logger.info(
         "chat turn session=%s user=%d intent=%s status=%s iterations=%d attempts=[%s] citations=%d "
-        "emergency=%s%s condensed=%s history=%d latency=%.2fs",
+        "emergency=%s%s condensed=%s history=%d llm_calls=%d max_prompt_tokens=%s latency=%.2fs",
         session_id,
         user_id,
         result.intent,
@@ -365,6 +377,8 @@ def run_turn(
         f"({','.join(result.emergency_matches)})" if result.emergency_matches else "",
         state.get("condensed", False),
         len(history),
+        len(result.llm_calls),
+        result.max_prompt_tokens,
         time.perf_counter() - started,
     )
     logger.debug("chat turn standalone question: %s", result.standalone_query)
@@ -394,6 +408,7 @@ def _save_exchange(
         iterations=result.iterations,
         citations=[dict(c) for c in result.citations],
         verifier_scores=[dict(a) for a in result.attempts],
+        llm_calls=[dict(c) for c in result.llm_calls],
     )
     try:
         store.append_exchange(session_id, user_id, user_entry, assistant_entry, transcript)

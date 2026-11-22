@@ -25,6 +25,13 @@ class DocumentResponse(BaseModel):
     created_at: UtcDatetime
 
 
+class UploadLimits(BaseModel):
+    """What the browser checks before sending a file (Phase 8.1). The server stays the authority."""
+
+    max_upload_mb: int
+    accepted_extensions: list[str]
+
+
 class IngestResult(BaseModel):
     """Body of the AI service's ``POST /internal/ingest`` (§9)."""
 

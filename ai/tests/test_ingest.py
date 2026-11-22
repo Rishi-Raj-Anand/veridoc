@@ -193,7 +193,10 @@ async def test_storage_failure_rolls_back_both_stores(monkeypatch: pytest.Monkey
         response = await client.post("/internal/ingest", json=body(1, path))
 
     assert response.status_code == 500
-    assert "disk full" in response.json()["detail"]
+    # The raw exception text stays in the log; the admin gets a plain sentence (Phase 8.1).
+    detail = response.json()["detail"]
+    assert detail == "indexing failed unexpectedly (RuntimeError) - see the AI service log"
+    assert "disk full" not in detail
     assert app.state.docstore.count_document(1) == 0
     assert app.state.vector_store.count_document(1) == 0
 

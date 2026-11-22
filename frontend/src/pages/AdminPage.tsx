@@ -3,19 +3,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type ChangeEvent } from "react";
 
-import { deleteDocument, listDocuments, uploadDocument } from "../api/admin";
-import { ApiError } from "../api/client";
+import { deleteDocument, getUploadLimits, listDocuments, uploadDocument } from "../api/admin";
+import { errorMessage } from "../api/client";
 import { AdminTabs } from "../components/admin/AdminTabs";
 import { DocumentTable } from "../components/admin/DocumentTable";
 import { HealthBanner } from "../components/HealthBanner";
 import { ACCEPTED_EXTENSIONS } from "../constants";
 
 const POLL_MS = 2000;
-const NETWORK_ERROR = "Could not reach the server.";
-
-function describe(error: unknown): string {
-  return error instanceof ApiError ? error.message : NETWORK_ERROR;
-}
+const describe = errorMessage;
 
 function hasAcceptedExtension(filename: string): boolean {
   const lower = filename.toLowerCase();
@@ -33,6 +29,12 @@ export function AdminPage() {
     // Poll only while something is still being ingested.
     refetchInterval: (query) =>
       query.state.data?.some((document) => document.status === "pending") ? POLL_MS : false,
+  });
+
+  const limits = useQuery({
+    queryKey: ["upload-limits"],
+    queryFn: getUploadLimits,
+    staleTime: Infinity,
   });
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["documents"] });
@@ -54,6 +56,14 @@ export function AdminPage() {
     }
     if (!hasAcceptedExtension(file.name)) {
       setClientError(`Unsupported file type. Use ${ACCEPTED_EXTENSIONS.join(", ")}.`);
+      return;
+    }
+    // Until the limit has loaded, the server's own 413 is the check.
+    const maxMb = limits.data?.max_upload_mb;
+    if (maxMb !== undefined && file.size > maxMb * 1024 * 1024) {
+      setClientError(
+        `This file is larger than the ${maxMb} MB upload limit. Split it into smaller files.`,
+      );
       return;
     }
     setClientError(null);

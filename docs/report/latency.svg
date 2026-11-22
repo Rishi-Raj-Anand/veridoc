@@ -1,0 +1,162 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 344" width="720" height="344" role="img" aria-labelledby="title">
+  <title id="title">Latency per question by variant</title>
+
+  <style>
+    .surface { fill: #fcfcfb; }
+    .ink { fill: #0b0b0b; }
+    .ink-2 { fill: #52514e; }
+    .grid { stroke: #e4e3df; stroke-width: 1; }
+    .axis { stroke: #a3a29c; stroke-width: 1; }
+    .s1 { fill: #2a78d6; }
+    .s2 { fill: #eb6834; }
+    .gap { stroke: #fcfcfb; stroke-width: 2; }
+    .tick { stroke: #0b0b0b; stroke-width: 2; }
+    text { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    @media (prefers-color-scheme: dark) {
+      .surface { fill: #1a1a19; }
+      .ink { fill: #f0efec; }
+      .ink-2 { fill: #c3c2b7; }
+      .grid { stroke: #34332f; }
+      .axis { stroke: #6b6a64; }
+      .s1 { fill: #3987e5; }
+      .s2 { fill: #d95926; }
+      .gap { stroke: #1a1a19; }
+      .tick { stroke: #f0efec; }
+    }
+  </style>
+  <rect class="surface" x="0" y="0" width="720" height="344" rx="8"/>
+  <text class="ink" x="24" y="32" font-size="17" font-weight="600">Latency per question (s)</text>
+  <text class="ink-2" x="24" y="54" font-size="12">Each dot is one question. The tall tick is the mean, the short tick the p95.</text>
+  <line class="axis" x1="200.0" y1="68" x2="200.0" y2="268"/>
+  <text class="ink-2" x="200.0" y="286" font-size="11" text-anchor="middle">0</text>
+  <line class="grid" x1="322.0" y1="68" x2="322.0" y2="268"/>
+  <text class="ink-2" x="322.0" y="286" font-size="11" text-anchor="middle">10</text>
+  <line class="grid" x1="444.0" y1="68" x2="444.0" y2="268"/>
+  <text class="ink-2" x="444.0" y="286" font-size="11" text-anchor="middle">20</text>
+  <line class="grid" x1="566.0" y1="68" x2="566.0" y2="268"/>
+  <text class="ink-2" x="566.0" y="286" font-size="11" text-anchor="middle">30</text>
+  <line class="grid" x1="688.0" y1="68" x2="688.0" y2="268"/>
+  <text class="ink-2" x="688.0" y="286" font-size="11" text-anchor="middle">40</text>
+  <text class="ink" x="188" y="128.0" font-size="13" text-anchor="end">Full dual-agent loop</text>
+  <circle class="s1 gap" cx="205.3" cy="124.0" r="4.5"/>
+  <circle class="s1 gap" cx="205.3" cy="114.0" r="4.5"/>
+  <circle class="s1 gap" cx="383.0" cy="124.0" r="4.5"/>
+  <circle class="s1 gap" cx="383.7" cy="114.0" r="4.5"/>
+  <circle class="s1 gap" cx="384.7" cy="134.0" r="4.5"/>
+  <circle class="s1 gap" cx="385.8" cy="104.0" r="4.5"/>
+  <circle class="s1 gap" cx="388.0" cy="144.0" r="4.5"/>
+  <circle class="s1 gap" cx="388.7" cy="94.0" r="4.5"/>
+  <circle class="s1 gap" cx="389.0" cy="154.0" r="4.5"/>
+  <circle class="s1 gap" cx="389.3" cy="124.0" r="4.5"/>
+  <circle class="s1 gap" cx="390.1" cy="124.0" r="4.5"/>
+  <circle class="s1 gap" cx="391.1" cy="124.0" r="4.5"/>
+  <circle class="s1 gap" cx="391.3" cy="124.0" r="4.5"/>
+  <circle class="s1 gap" cx="391.6" cy="124.0" r="4.5"/>
+  <circle class="s1 gap" cx="392.1" cy="124.0" r="4.5"/>
+  <circle class="s1 gap" cx="392.4" cy="124.0" r="4.5"/>
+  <circle class="s1 gap" cx="393.0" cy="124.0" r="4.5"/>
+  <circle class="s1 gap" cx="394.1" cy="114.0" r="4.5"/>
+  <circle class="s1 gap" cx="394.1" cy="124.0" r="4.5"/>
+  <circle class="s1 gap" cx="394.9" cy="134.0" r="4.5"/>
+  <circle class="s1 gap" cx="396.1" cy="104.0" r="4.5"/>
+  <circle class="s1 gap" cx="396.2" cy="124.0" r="4.5"/>
+  <circle class="s1 gap" cx="396.8" cy="124.0" r="4.5"/>
+  <circle class="s1 gap" cx="397.0" cy="124.0" r="4.5"/>
+  <circle class="s1 gap" cx="397.3" cy="124.0" r="4.5"/>
+  <circle class="s1 gap" cx="397.4" cy="124.0" r="4.5"/>
+  <circle class="s1 gap" cx="398.3" cy="144.0" r="4.5"/>
+  <circle class="s1 gap" cx="398.3" cy="124.0" r="4.5"/>
+  <circle class="s1 gap" cx="398.5" cy="124.0" r="4.5"/>
+  <circle class="s1 gap" cx="398.6" cy="124.0" r="4.5"/>
+  <circle class="s1 gap" cx="399.0" cy="94.0" r="4.5"/>
+  <circle class="s1 gap" cx="400.2" cy="154.0" r="4.5"/>
+  <circle class="s1 gap" cx="401.7" cy="124.0" r="4.5"/>
+  <circle class="s1 gap" cx="401.8" cy="124.0" r="4.5"/>
+  <circle class="s1 gap" cx="402.6" cy="124.0" r="4.5"/>
+  <circle class="s1 gap" cx="402.8" cy="124.0" r="4.5"/>
+  <circle class="s1 gap" cx="402.9" cy="124.0" r="4.5"/>
+  <circle class="s1 gap" cx="404.4" cy="114.0" r="4.5"/>
+  <circle class="s1 gap" cx="405.4" cy="134.0" r="4.5"/>
+  <circle class="s1 gap" cx="406.9" cy="104.0" r="4.5"/>
+  <circle class="s1 gap" cx="407.3" cy="124.0" r="4.5"/>
+  <circle class="s1 gap" cx="407.5" cy="124.0" r="4.5"/>
+  <circle class="s1 gap" cx="410.0" cy="144.0" r="4.5"/>
+  <circle class="s1 gap" cx="410.8" cy="94.0" r="4.5"/>
+  <circle class="s1 gap" cx="414.5" cy="114.0" r="4.5"/>
+  <circle class="s1 gap" cx="415.6" cy="134.0" r="4.5"/>
+  <circle class="s1 gap" cx="419.6" cy="124.0" r="4.5"/>
+  <circle class="s1 gap" cx="420.0" cy="104.0" r="4.5"/>
+  <circle class="s1 gap" cx="423.6" cy="144.0" r="4.5"/>
+  <circle class="s1 gap" cx="427.2" cy="114.0" r="4.5"/>
+  <circle class="s1 gap" cx="455.9" cy="124.0" r="4.5"/>
+  <circle class="s1 gap" cx="520.5" cy="124.0" r="4.5"/>
+  <circle class="s1 gap" cx="646.4" cy="124.0" r="4.5"/>
+  <circle class="s1 gap" cx="653.4" cy="114.0" r="4.5"/>
+  <circle class="s1 gap" cx="673.0" cy="124.0" r="4.5"/>
+  <line class="tick" x1="409.7" y1="86.0" x2="409.7" y2="162.0"/>
+  <text class="ink" x="409.7" y="82.0" font-size="11" text-anchor="middle">mean 17.2</text>
+  <line class="tick" x1="646.4" y1="98.0" x2="646.4" y2="150.0"/>
+  <text class="ink-2" x="646.4" y="172.0" font-size="11" text-anchor="middle">p95 36.6</text>
+  <text class="ink" x="188" y="224.0" font-size="13" text-anchor="end">Single pass (no Verifier)</text>
+  <circle class="s2 gap" cx="205.2" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="205.4" cy="210.0" r="4.5"/>
+  <circle class="s2 gap" cx="355.6" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="355.9" cy="210.0" r="4.5"/>
+  <circle class="s2 gap" cx="357.9" cy="230.0" r="4.5"/>
+  <circle class="s2 gap" cx="359.2" cy="200.0" r="4.5"/>
+  <circle class="s2 gap" cx="359.7" cy="240.0" r="4.5"/>
+  <circle class="s2 gap" cx="361.2" cy="190.0" r="4.5"/>
+  <circle class="s2 gap" cx="361.4" cy="250.0" r="4.5"/>
+  <circle class="s2 gap" cx="361.7" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="362.1" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="363.3" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="364.5" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="364.6" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="364.9" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="365.5" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="365.8" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="365.9" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="365.9" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="366.1" cy="210.0" r="4.5"/>
+  <circle class="s2 gap" cx="366.1" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="366.3" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="366.5" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="367.2" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="367.2" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="368.1" cy="230.0" r="4.5"/>
+  <circle class="s2 gap" cx="369.3" cy="200.0" r="4.5"/>
+  <circle class="s2 gap" cx="369.4" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="372.3" cy="240.0" r="4.5"/>
+  <circle class="s2 gap" cx="372.4" cy="190.0" r="4.5"/>
+  <circle class="s2 gap" cx="373.1" cy="250.0" r="4.5"/>
+  <circle class="s2 gap" cx="373.1" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="373.4" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="373.5" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="373.6" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="374.1" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="374.3" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="375.2" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="375.3" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="375.8" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="376.0" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="381.9" cy="210.0" r="4.5"/>
+  <circle class="s2 gap" cx="382.3" cy="230.0" r="4.5"/>
+  <circle class="s2 gap" cx="383.2" cy="200.0" r="4.5"/>
+  <circle class="s2 gap" cx="383.6" cy="240.0" r="4.5"/>
+  <circle class="s2 gap" cx="383.7" cy="190.0" r="4.5"/>
+  <circle class="s2 gap" cx="388.2" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="388.3" cy="250.0" r="4.5"/>
+  <circle class="s2 gap" cx="388.7" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="389.2" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="390.2" cy="220.0" r="4.5"/>
+  <circle class="s2 gap" cx="392.0" cy="210.0" r="4.5"/>
+  <circle class="s2 gap" cx="396.7" cy="230.0" r="4.5"/>
+  <circle class="s2 gap" cx="398.1" cy="200.0" r="4.5"/>
+  <circle class="s2 gap" cx="419.2" cy="220.0" r="4.5"/>
+  <line class="tick" x1="367.3" y1="182.0" x2="367.3" y2="258.0"/>
+  <text class="ink" x="367.3" y="178.0" font-size="11" text-anchor="middle">mean 13.7</text>
+  <line class="tick" x1="396.7" y1="194.0" x2="396.7" y2="246.0"/>
+  <text class="ink-2" x="396.7" y="268.0" font-size="11" text-anchor="middle">p95 16.1</text>
+  <text class="ink-2" x="444.0" y="306" font-size="12" text-anchor="middle">seconds per answer, including model swaps</text>
+  <text class="ink-2" x="24" y="326" font-size="11">Dots under 2 s are questions the intent classifier routed away from the medical pipeline (an instant refusal).</text>
+</svg>

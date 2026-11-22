@@ -14,6 +14,7 @@ from pydantic import field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 DEFAULT_SECRETS = frozenset({"change-me", "change-me-shared-secret"})
+MIN_JWT_SECRET_BYTES = 32
 
 
 class Settings(BaseSettings):
@@ -58,6 +59,13 @@ class Settings(BaseSettings):
             raise ValueError("INGEST_TIMEOUT_MINUTES must be between 1 and 1440")
         return value
 
+    @field_validator("max_upload_mb")
+    @classmethod
+    def _check_max_upload(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("MAX_UPLOAD_MB must be at least 1")
+        return value
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_cors_origins(cls, value: object) -> list[str]:
@@ -94,6 +102,11 @@ class Settings(BaseSettings):
             )
             if value in DEFAULT_SECRETS
         ]
+
+    @property
+    def jwt_secret_too_short(self) -> bool:
+        """HS256 wants a key of at least 32 bytes (§11). Warned about, not enforced."""
+        return len(self.jwt_secret.encode("utf-8")) < MIN_JWT_SECRET_BYTES
 
 
 @lru_cache

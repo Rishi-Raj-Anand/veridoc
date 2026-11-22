@@ -1,7 +1,8 @@
 """Internal health endpoint (CLAUDE.md §9).
 
 Reports three independent checks - Ollama reachable, both required models pulled,
-and Qdrant open - so a failure says *which* dependency is broken.
+and Qdrant open - so a failure says *which* dependency is broken. It also reports how many
+chunks are indexed, so the admin can see an empty knowledge base (Phase 8.1).
 """
 
 from __future__ import annotations
@@ -44,11 +45,18 @@ class QdrantHealth(BaseModel):
     error: str | None = None
 
 
+class KnowledgeBaseHealth(BaseModel):
+    # Child chunks indexed; null when Qdrant is not open. 0 is not "degraded": the service
+    # works, it just falls back on every medical question until documents are uploaded.
+    chunks: int | None = None
+
+
 class HealthResponse(BaseModel):
     status: Literal["ok", "degraded"]
     ollama: OllamaHealth
     models: ModelsHealth
     qdrant: QdrantHealth
+    knowledge_base: KnowledgeBaseHealth = KnowledgeBaseHealth()
 
 
 async def check_ollama(settings: Settings) -> tuple[OllamaHealth, ModelsHealth]:
@@ -89,6 +97,17 @@ async def check_qdrant(request: Request, settings: Settings) -> QdrantHealth:
     return QdrantHealth(ok=True, path=path)
 
 
+async def check_knowledge_base(request: Request) -> KnowledgeBaseHealth:
+    store = getattr(request.app.state, "vector_store", None)
+    if store is None:
+        return KnowledgeBaseHealth()
+    try:
+        return KnowledgeBaseHealth(chunks=await asyncio.to_thread(store.count))
+    except Exception as exc:  # health must report, never raise
+        logger.warning("knowledge base count failed: %s", exc)
+        return KnowledgeBaseHealth()
+
+
 @router.get("/health", response_model=HealthResponse, summary="Ollama, models and Qdrant")
 async def health(
     request: Request,
@@ -96,10 +115,14 @@ async def health(
 ) -> HealthResponse:
     ollama_health, models_health = await check_ollama(settings)
     qdrant_health = await check_qdrant(request, settings)
+    knowledge_base = (
+        await check_knowledge_base(request) if qdrant_health.ok else KnowledgeBaseHealth()
+    )
     healthy = ollama_health.ok and models_health.llm and models_health.embed and qdrant_health.ok
     return HealthResponse(
         status="ok" if healthy else "degraded",
         ollama=ollama_health,
         models=models_health,
         qdrant=qdrant_health,
+        knowledge_base=knowledge_base,
     )

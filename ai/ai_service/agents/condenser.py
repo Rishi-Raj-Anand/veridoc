@@ -58,6 +58,7 @@ class Condenser:
                 {"role": "user", "content": user},
             ],
             temperature=CONDENSER_TEMPERATURE,
+            purpose="condense",
         )
         standalone = clean_condensed(reply)
         if not standalone or len(standalone) > MAX_QUERY_CHARS or NOT_IN_DOCUMENTS in standalone:

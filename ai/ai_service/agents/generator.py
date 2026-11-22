@@ -37,5 +37,6 @@ class Generator:
                 {"role": "user", "content": user},
             ],
             temperature=GENERATOR_TEMPERATURE,
+            purpose="generate",
         )
         return strip_thinking(reply)

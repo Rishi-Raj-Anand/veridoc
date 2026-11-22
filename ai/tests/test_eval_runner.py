@@ -19,6 +19,7 @@ from ai_service.eval.run_ragas import (
     format_summary,
     load_runs,
     p95,
+    result_record,
     run_case,
     run_pipelines,
     score_rows,
@@ -344,3 +345,24 @@ def test_limit_keeps_the_first_rows(tmp_path: Path) -> None:
     cases = run_ragas.load_cases(path, get_settings(), 2)
 
     assert [c.question for c in cases] == ["Q0?", "Q1?"]
+
+
+def test_the_summary_reports_iteration_timing_and_prompt_size() -> None:
+    fast = make_row(id="a")
+    fast.attempts = [{"iteration": 1, "outcome": "pass", "seconds": 10.0}]
+    fast.llm_calls = [{"purpose": "generate", "prompt_tokens": 2400}]
+    slow = make_row(id="b", iterations=2)
+    slow.attempts = [
+        {"iteration": 1, "outcome": "fail", "seconds": 14.0},
+        {"iteration": 2, "outcome": "pass", "seconds": 20.0},
+    ]
+    slow.llm_calls = [{"purpose": "verify", "prompt_tokens": 5100}, {"purpose": "embed"}]
+    old = make_row(id="c")  # a Phase 7 runs file has neither field
+
+    [summary] = summarize([fast, slow, old])
+
+    assert summary.iteration_seconds == {1: 12.0, 2: 20.0, 3: None}
+    assert summary.max_prompt_tokens == 5100
+    record = result_record(slow)
+    assert (record["attempt_seconds"], record["max_prompt_tokens"]) == ("14.0 20.0", 5100)
+    assert result_record(old)["max_prompt_tokens"] is None

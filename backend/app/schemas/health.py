@@ -39,6 +39,13 @@ class QdrantHealth(BaseModel):
     error: str | None = None
 
 
+class KnowledgeBaseHealth(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    # Child chunks indexed; null when the AI service could not count them (Phase 8.1).
+    chunks: int | None = None
+
+
 class AiServiceHealth(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -46,6 +53,7 @@ class AiServiceHealth(BaseModel):
     ollama: OllamaHealth
     models: ModelsHealth
     qdrant: QdrantHealth
+    knowledge_base: KnowledgeBaseHealth = KnowledgeBaseHealth()
 
 
 class HealthResponse(BaseModel):
